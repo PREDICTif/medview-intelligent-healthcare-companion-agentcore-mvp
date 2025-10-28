@@ -16,6 +16,7 @@ import Alert from '@cloudscape-design/components/alert';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AuthModal from './AuthModal';
+import StreamingChat from './components/StreamingChat';
 import { getCurrentUser, getIdToken, signOut, AuthUser } from './auth';
 import { invokeAgent } from './agentcore';
 import './markdown.css';
@@ -46,6 +47,12 @@ function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [messageFeedback, setMessageFeedback] = useState<MessageFeedback>({});
   const [showSupportPrompts, setShowSupportPrompts] = useState(true);
+  
+  // WebSocket streaming configuration
+  const webSocketUrl = import.meta.env.VITE_WEBSOCKET_URL || null;
+  const agentRuntimeArn = import.meta.env.VITE_AGENT_RUNTIME_ARN || '';
+  const region = import.meta.env.VITE_REGION || 'us-east-1';
+  const useStreaming = !!webSocketUrl;
 
   useEffect(() => {
     checkAuth();

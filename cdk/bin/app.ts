@@ -6,6 +6,7 @@ import { AgentCoreStack } from '../lib/runtime-stack';
 import { FrontendStack } from '../lib/frontend-stack';
 import { AuthStack } from '../lib/auth-stack';
 import { MihcStack } from '../lib/mihc-stack';
+import { WebSocketStack } from '../lib/websocket-stack';
 import process = require('process');
 
 const app = new cdk.App();
@@ -59,6 +60,18 @@ new MihcStack(app, 'MihcStack', {
     region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
   },
   description: 'MIHC: Medical database, Lambda functions, and healthcare data infrastructure',
+});
+
+// WebSocket stack for streaming responses
+new WebSocketStack(app, 'AgentCoreWebSocket', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+  },
+  userPool: authStack.userPool,
+  agentRuntimeArn: agentStack.agentRuntimeArn,
+  region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+  description: 'AgentCore WebSocket: Streaming response infrastructure',
 });
 
 app.synth();

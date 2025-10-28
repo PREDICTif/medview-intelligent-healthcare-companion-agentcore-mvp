@@ -1,0 +1,10 @@
+{
+  "name": "sse-handler",
+  "version": "1.0.0",
+  "description": "Server-Sent Events handler for streaming fallback",
+  "main": "index.ts",
+  "dependencies": {
+    "@types/aws-lambda": "^8.10.0"
+  }
+}
+

@@ -1,0 +1,13 @@
+{
+  "name": "bedrock-streaming-handler",
+  "version": "1.0.0",
+  "description": "AgentCore streaming response handler with SigV4 signing",
+  "main": "index.ts",
+  "dependencies": {
+    "@aws-sdk/signature-v4": "^3.0.0",
+    "@aws-sdk/protocol-http": "^3.0.0",
+    "@aws-crypto/sha256-js": "^5.0.0",
+    "@aws-sdk/credential-provider-node": "^3.0.0"
+  }
+}
+

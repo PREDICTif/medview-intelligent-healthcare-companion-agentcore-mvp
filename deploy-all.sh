@@ -196,8 +196,19 @@ echo -e "\033[0;32mRegion: $REGION\033[0m"
 echo -e "\033[0;32mUser Pool ID: $USER_POOL_ID\033[0m"
 echo -e "\033[0;32mUser Pool Client ID: $USER_POOL_CLIENT_ID\033[0m"
 
-# Build frontend with AgentCore Runtime ARN and Cognito config
-./scripts/build-frontend.sh "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$AGENT_RUNTIME_ARN" "$REGION"
+# Deploy WebSocket stack first to get URL
+echo -e "\n\033[0;33mDeploying WebSocket stack...\033[0m"
+pushd cdk > /dev/null
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+npx cdk deploy AgentCoreWebSocket --output "cdk.out.$TIMESTAMP" --no-cli-pager --require-approval never
+popd > /dev/null
+
+# Get WebSocket URL
+WEBSOCKET_URL=$(aws cloudformation describe-stacks --stack-name AgentCoreWebSocket --query "Stacks[0].Outputs[?OutputKey=='WebSocketURL'].OutputValue" --output text --no-cli-pager)
+echo -e "\033[0;32mWebSocket URL: $WEBSOCKET_URL\033[0m"
+
+# Build frontend with AgentCore Runtime ARN, Cognito config, and WebSocket URL
+./scripts/build-frontend.sh "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$AGENT_RUNTIME_ARN" "$REGION" "$WEBSOCKET_URL"
 
 # Deploy frontend stack
 pushd cdk > /dev/null

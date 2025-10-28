@@ -8,9 +8,10 @@ USER_POOL_ID="$1"
 USER_POOL_CLIENT_ID="$2"
 AGENT_RUNTIME_ARN="$3"
 REGION="$4"
+WEBSOCKET_URL="${5:-}"
 
 if [ -z "$USER_POOL_ID" ] || [ -z "$USER_POOL_CLIENT_ID" ] || [ -z "$AGENT_RUNTIME_ARN" ] || [ -z "$REGION" ]; then
-    echo "Usage: $0 <USER_POOL_ID> <USER_POOL_CLIENT_ID> <AGENT_RUNTIME_ARN> <REGION>"
+    echo "Usage: $0 <USER_POOL_ID> <USER_POOL_CLIENT_ID> <AGENT_RUNTIME_ARN> <REGION> [WEBSOCKET_URL]"
     exit 1
 fi
 
@@ -19,12 +20,14 @@ echo "  User Pool ID: $USER_POOL_ID"
 echo "  User Pool Client ID: $USER_POOL_CLIENT_ID"
 echo "  Agent Runtime ARN: $AGENT_RUNTIME_ARN"
 echo "  Region: $REGION"
+echo "  WebSocket URL: ${WEBSOCKET_URL:-'Not provided'}"
 
 # Set environment variables for build
 export VITE_USER_POOL_ID="$USER_POOL_ID"
 export VITE_USER_POOL_CLIENT_ID="$USER_POOL_CLIENT_ID"
 export VITE_AGENT_RUNTIME_ARN="$AGENT_RUNTIME_ARN"
 export VITE_REGION="$REGION"
+export VITE_WEBSOCKET_URL="$WEBSOCKET_URL"
 
 # Build frontend
 pushd frontend > /dev/null
