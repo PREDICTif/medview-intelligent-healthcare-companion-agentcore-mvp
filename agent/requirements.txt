@@ -1,6 +1,15 @@
 strands-agents
 strands-agents-tools
-uv
 boto3
 bedrock-agentcore
-bedrock-agentcore-starter-toolkit
+langchain_aws
+tavily-python
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.0.10
+langchain-tavily
+# Optional dependencies
+python-dotenv
+# Commented out heavy dependencies that can cause Lambda issues
+# ragas
+# opensearch-py

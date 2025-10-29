@@ -7,6 +7,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as path from 'path';
 import { Construct } from 'constructs';
 
 export interface AgentCoreStackProps extends cdk.StackProps {
@@ -50,11 +51,25 @@ export class AgentCoreStack extends cdk.Stack {
     const discoveryUrl = `https://cognito-idp.${region}.amazonaws.com/${props.userPool.userPoolId}/.well-known/openid-configuration`;
 
     // Step 1: Upload agent source code to S3
-    // BucketDeployment extracts files to the destination prefix
+    // Use path.resolve to ensure correct path resolution
+    const agentPath = path.resolve(__dirname, '../../agent');
+
     const agentSourceUpload = new s3deploy.BucketDeployment(this, 'AgentSourceUpload', {
-      sources: [s3deploy.Source.asset('../agent')],
+      sources: [s3deploy.Source.asset(agentPath, {
+        exclude: [
+          '__pycache__/**',
+          'venv/**',
+          '*.pyc',
+          '.env',
+          'test_*.py',
+          'local_*.py',
+          'diagnose_*.py',
+          'fix_*.py',
+          'deployment_checklist.md'
+        ]
+      })],
       destinationBucket: sourceBucket,
-      destinationKeyPrefix: 'agent-source/',  // Upload to agent-source/ folder
+      destinationKeyPrefix: 'agent-source/',
       prune: false,
       retainOnDelete: false,
     });
@@ -235,6 +250,8 @@ async function sendResponse(event, status, data, reason) {
       environmentVariables: {
         LOG_LEVEL: 'INFO',
         IMAGE_VERSION: new Date().toISOString(),
+        TAVILY_API_KEY: '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',
+        AWS_DEFAULT_REGION: region,
       },
 
       tags: {

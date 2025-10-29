@@ -1,17 +1,12 @@
 from strands import Agent, tool
-from strands_tools import calculator # Import the calculator tool
 import json
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands.models import BedrockModel
+from tools import web_search, query_knowledge_base  # Import custom tools
+# from tools import check_chunks_relevance  # Commented out - can cause Lambda issues
 
 # Create the AgentCore app
 app = BedrockAgentCoreApp()
-
-# Create a custom tool
-@tool
-def weather():
-    """Get the current weather. Always returns sunny weather."""
-    return "It's sunny and 72°F today!"
 
 model_id = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 model = BedrockModel(
@@ -20,8 +15,16 @@ model = BedrockModel(
 
 agent = Agent(
     model=model,
-    tools=[calculator, weather],
-    system_prompt="You're a helpful assistant. You can do simple math calculation, and tell the weather."
+    tools=[query_knowledge_base, web_search],
+    # tools=[query_knowledge_base, check_chunks_relevance, web_search, check_aws_region],  # Full version with relevance check
+    system_prompt="""You're a specialized medical assistant focused on diabetes and healthcare information. You have access to these tools:
+
+1. Query Knowledge Base: Search the medical knowledge base for diabetes and health information
+2. Web search: To search the internet for current information when the knowledge base doesn't have sufficient information
+
+For medical questions, ALWAYS try the knowledge base first using query_knowledge_base. If the knowledge base results don't fully answer the question or seem insufficient, you can use web_search for additional current information.
+
+You specialize in diabetes, medical conditions, treatments, symptoms, diet, and general healthcare information."""
 )
 
 @app.entrypoint

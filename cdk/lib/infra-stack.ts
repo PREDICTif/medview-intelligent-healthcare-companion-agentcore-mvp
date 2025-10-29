@@ -141,6 +141,36 @@ export class AgentCoreInfraStack extends cdk.Stack {
       resources: ['*'],
     }));
 
+    // Bedrock Agent Runtime permissions for Knowledge Base access
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'BedrockAgentRuntimeAccess',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock:Retrieve',
+        'bedrock:RetrieveAndGenerate',
+        'bedrock-agent-runtime:Retrieve',
+        'bedrock-agent-runtime:RetrieveAndGenerate',
+      ],
+      resources: [
+        `arn:aws:bedrock:${this.region}:${this.account}:knowledge-base/*`,
+        `arn:aws:bedrock:${this.region}:${this.account}:agent/*`,
+      ],
+    }));
+
+    // SSM Parameter Store access for Knowledge Base IDs
+    agentRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SSMParameterAccess',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'ssm:GetParameter',
+        'ssm:GetParameters',
+        'ssm:GetParametersByPath',
+      ],
+      resources: [
+        `arn:aws:ssm:${this.region}:${this.account}:parameter/bedrock/knowledge-base/*`,
+      ],
+    }));
+
     // Create S3 bucket for CodeBuild source
     const sourceBucket = new s3.Bucket(this, 'SourceBucket', {
       bucketName: `bedrock-agentcore-sources-${this.account}-${this.region}`,
