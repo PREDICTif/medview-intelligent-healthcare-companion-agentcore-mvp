@@ -4,3 +4,14 @@ uv
 boto3
 bedrock-agentcore
 bedrock-agentcore-starter-toolkit
+opensearch-py
+retrying
+langchain_aws
+tavily-python
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.0.10
+langchain-tavily
+ragas
+python-dotenv
+langchain-tavily
