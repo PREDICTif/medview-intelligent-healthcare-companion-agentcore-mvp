@@ -76,8 +76,18 @@ kb_id = BedrockKnowledgeBase.get_kb_id_by_name("diabetes-agent-kb")
 
 ### 3. List All Saved Knowledge Bases
 ```python
-kb = BedrockKnowledgeBase("temp", "temp", "temp")
-saved_kbs = kb.list_saved_knowledge_bases()
+# Create temporary instance to access class methods
+temp_kb = BedrockKnowledgeBase("temp", "temp", "temp")
+saved_kbs = temp_kb.list_saved_knowledge_bases()
+
+# Or use direct Parameter Store access
+import boto3
+ssm = boto3.client('ssm')
+response = ssm.get_parameters_by_path(Path="/bedrock/knowledge-base/", Recursive=True)
+for param in response['Parameters']:
+    kb_name = param['Name'].split('/')[-2]
+    kb_id = param['Value']
+    print(f"{kb_name}: {kb_id}")
 ```
 
 ## Quick Start

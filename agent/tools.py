@@ -18,94 +18,122 @@ except ImportError:
             from langchain.docstore.document import Document
         except ImportError:
             from langchain_community.docstore.document import Document
-from strands_tools import agent_graph, retrieve
-from langchain_aws import ChatBedrockConverse, BedrockEmbeddings
-from ragas import SingleTurnSample
-from ragas.metrics import LLMContextPrecisionWithoutReference
-from ragas.llms import LangchainLLMWrapper
-from ragas.embeddings import LangchainEmbeddingsWrapper
+# Heavy imports commented out to reduce Lambda deployment complexity
+# from strands_tools import agent_graph, retrieve
+# from langchain_aws import ChatBedrockConverse, BedrockEmbeddings
+# from ragas import SingleTurnSample
+# from ragas.metrics import LLMContextPrecisionWithoutReference
+# from ragas.llms import LangchainLLMWrapper
+# from ragas.embeddings import LangchainEmbeddingsWrapper
 from langchain_tavily import TavilySearch
 
-eval_modelId = 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
-thinking_params= {
-    "thinking": {
-        "type": "disabled"
-    }
-}
-llm_for_evaluation = ChatBedrockConverse(model_id=eval_modelId, additional_model_request_fields=thinking_params)
-llm_for_evaluation = LangchainLLMWrapper(llm_for_evaluation)
+# RAGAS evaluation setup (commented out)
+# eval_modelId = 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
+# thinking_params= {
+#     "thinking": {
+#         "type": "disabled"
+#     }
+# }
+# llm_for_evaluation = ChatBedrockConverse(model_id=eval_modelId, additional_model_request_fields=thinking_params)
+# llm_for_evaluation = LangchainLLMWrapper(llm_for_evaluation)
 
-# Use Bedrock embeddings with the wrapper (deprecated but still functional)
-bedrock_embeddings_client = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
-bedrock_embeddings = LangchainEmbeddingsWrapper(bedrock_embeddings_client)
+# Use Bedrock embeddings with the wrapper (commented out)
+# bedrock_embeddings_client = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
+# bedrock_embeddings = LangchainEmbeddingsWrapper(bedrock_embeddings_client)
 
-# Load environment variables
-from dotenv import load_dotenv
-
-# Load .env file
-load_dotenv()
+# Load environment variables (try .env file for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not available in production, that's fine
+    pass
 
 # Get TAVILY_API_KEY from environment
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
 
-if not TAVILY_API_KEY:
-    raise ValueError("TAVILY_API_KEY not found in environment variables. Please check your .env file.")
-
-# Initialize Tavily search tool with the modern API
-web_search_tool = TavilySearch(api_key=TAVILY_API_KEY, max_results=3)
-
-@tool
-def check_chunks_relevance(results: str, question: str):
-    """
-    Evaluates the relevance of retrieved chunks to the user question using RAGAs.
-
-    Args:
-        results (str): Retrieval output as a string with 'Score:' and 'Content:' patterns.
-        question (str): Original user question.
-
-    Returns:
-        dict: A binary score ('yes' or 'no') and the numeric relevance score, or an error message.
-    """
+# Initialize Tavily search tool with the modern API (only if API key is available)
+web_search_tool = None
+if TAVILY_API_KEY:
     try:
-        if not results or not isinstance(results, str):
-            raise ValueError("Invalid input: 'results' must be a non-empty string.")
-        if not question or not isinstance(question, str):
-            raise ValueError("Invalid input: 'question' must be a non-empty string.")
-
-        # Extract content chunks using regex
-        pattern = r"Score:.*?\nContent:\s*(.*?)(?=Score:|\Z)"
-        docs = [chunk.strip() for chunk in re.findall(pattern, results, re.DOTALL)]
-
-        if not docs:
-            raise ValueError("No valid content chunks found in 'results'.")
-
-        # Prepare evaluation sample
-        sample = SingleTurnSample(
-            user_input=question,
-            response="placeholder-response",  # required dummy response
-            retrieved_contexts=docs
-        )
-
-        # Evaluate using context precision metric
-        scorer = LLMContextPrecisionWithoutReference(llm=llm_for_evaluation)
-        score = asyncio.run(scorer.single_turn_ascore(sample))
-
-        print("------------------------")
-        print("Context evaluation")
-        print("------------------------")
-        print(f"chunk_relevance_score: {score}")
-
-        return {
-            "chunk_relevance_score": "yes" if score > 0.5 else "no",
-            "chunk_relevance_value": score
-        }
-
+        web_search_tool = TavilySearch(api_key=TAVILY_API_KEY, max_results=3)
+        print("✅ Tavily search tool initialized")
     except Exception as e:
-        return {
-            "error": str(e),
-            "chunk_relevance_score": "unknown",
-            "chunk_relevance_value": None
-        }
+        print(f"⚠️ Warning: Could not initialize Tavily search tool: {e}")
+        web_search_tool = None
+else:
+    print("⚠️ Warning: TAVILY_API_KEY not found. Web search will not be available.")
+
+# @tool
+# def check_chunks_relevance(results: str, question: str):
+#     """
+#     Evaluates the relevance of retrieved chunks to the user question using RAGAs.
+#     COMMENTED OUT: This tool uses asyncio and RAGAS which can cause Lambda deployment issues.
+#     
+#     Args:
+#         results (str): Retrieval output as a string with 'Score:' and 'Content:' patterns.
+#         question (str): Original user question.
+# 
+#     Returns:
+#         dict: A binary score ('yes' or 'no') and the numeric relevance score, or an error message.
+#     """
+#     try:
+#         if not results or not isinstance(results, str):
+#             raise ValueError("Invalid input: 'results' must be a non-empty string.")
+#         if not question or not isinstance(question, str):
+#             raise ValueError("Invalid input: 'question' must be a non-empty string.")
+# 
+#         # Extract content chunks using regex
+#         pattern = r"Score:.*?\nContent:\s*(.*?)(?=Score:|\Z)"
+#         docs = [chunk.strip() for chunk in re.findall(pattern, results, re.DOTALL)]
+# 
+#         if not docs:
+#             raise ValueError("No valid content chunks found in 'results'.")
+# 
+#         # Prepare evaluation sample
+#         sample = SingleTurnSample(
+#             user_input=question,
+#             response="placeholder-response",  # required dummy response
+#             retrieved_contexts=docs
+#         )
+# 
+#         # Evaluate using context precision metric
+#         scorer = LLMContextPrecisionWithoutReference(llm=llm_for_evaluation)
+#         
+#         # Handle asyncio in Lambda environment
+#         try:
+#             # Try to get existing event loop
+#             loop = asyncio.get_event_loop()
+#             if loop.is_running():
+#                 # If loop is already running (like in Lambda), create a task
+#                 import concurrent.futures
+#                 with concurrent.futures.ThreadPoolExecutor() as executor:
+#                     future = executor.submit(asyncio.run, scorer.single_turn_ascore(sample))
+#                     score = future.result()
+#             else:
+#                 score = asyncio.run(scorer.single_turn_ascore(sample))
+#         except RuntimeError:
+#             # Fallback for Lambda environment
+#             score = asyncio.run(scorer.single_turn_ascore(sample))
+# 
+#         print("------------------------")
+#         print("Context evaluation")
+#         print("------------------------")
+#         print(f"chunk_relevance_score: {score}")
+# 
+#         return {
+#             "chunk_relevance_score": "yes" if score > 0.5 else "no",
+#             "chunk_relevance_value": score
+#         }
+# 
+#     except Exception as e:
+#         return {
+#             "error": str(e),
+#             "chunk_relevance_score": "unknown",
+#             "chunk_relevance_value": None
+#         }
+
+
 
 @tool
 def query_knowledge_base(query: str, kb_name: str = "diabetes-agent-kb"):
@@ -124,8 +152,14 @@ def query_knowledge_base(query: str, kb_name: str = "diabetes-agent-kb"):
         print(f"Query: {query}")
         print(f"KB Name: {kb_name}")
         
+        # Get current region from session or environment
+        session = boto3.Session()
+        region_name = session.region_name or os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+        
+        print(f"Using AWS region: {region_name}")
+        
         # Get KB ID from Parameter Store
-        ssm_client = boto3.client('ssm')
+        ssm_client = boto3.client('ssm', region_name=region_name)
         parameter_name = f"/bedrock/knowledge-base/{kb_name}/kb-id"
         
         try:
@@ -159,8 +193,19 @@ def query_knowledge_base(query: str, kb_name: str = "diabetes-agent-kb"):
             except Exception as e:
                 return f"Error accessing Parameter Store: {str(e)}"
         
-        # Query the Knowledge Base
-        bedrock_runtime = boto3.client('bedrock-agent-runtime')
+        # Query the Knowledge Base with explicit region and configuration
+        bedrock_runtime = boto3.client(
+            'bedrock-agent-runtime', 
+            region_name=region_name,
+            config=boto3.session.Config(
+                retries={'max_attempts': 3, 'mode': 'adaptive'},
+                read_timeout=60,
+                connect_timeout=60
+            )
+        )
+        
+        print(f"Bedrock client endpoint: {bedrock_runtime._endpoint.host}")
+        print(f"Attempting to retrieve from KB ID: {kb_id}")
         
         response = bedrock_runtime.retrieve(
             knowledgeBaseId=kb_id,
@@ -199,26 +244,45 @@ def query_knowledge_base(query: str, kb_name: str = "diabetes-agent-kb"):
 @tool
 def web_search(query):
     """
-    Perform web search based on the query and return results as Documents.
-    Only to be used if chunk_relevance_score is no.
+    Perform web search based on the query and return results.
 
     Args:
-        query (str): The user question or rephrased query.
+        query (str): The user question or search query.
 
     Returns:
-        dict: {
-            "documents": [Document, ...]  # list of Document objects with web results
-        }
+        str: Formatted web search results or error message
     """
 
     print("---WEB SEARCH---")
+    print(f"Query: {query}")
 
-    # Perform web search
-    docs = web_search_tool.invoke({"query": query})
+    # Check if web search tool is available
+    if web_search_tool is None:
+        error_msg = "Web search is not available. TAVILY_API_KEY not configured in environment variables."
+        print(f"❌ {error_msg}")
+        return error_msg
 
-    # Convert each result into a Document object
-    documents = [Document(page_content=d["content"]) for d in docs]
+    try:
+        # Perform web search
+        docs = web_search_tool.invoke({"query": query})
+        
+        if not docs:
+            return f"No web search results found for query: {query}"
 
-    return {
-        "documents": documents
-    }
+        # Format results for the agent
+        formatted_results = f"Web Search Results for: {query}\n\n"
+        
+        for i, doc in enumerate(docs, 1):
+            content = doc.get("content", "No content available")
+            url = doc.get("url", "No URL available")
+            title = doc.get("title", "No title available")
+            
+            formatted_results += f"Result {i}:\nTitle: {title}\nURL: {url}\nContent: {content}\n\n"
+        
+        print(f"Retrieved {len(docs)} web search results")
+        return formatted_results
+        
+    except Exception as e:
+        error_msg = f"Web search failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        return error_msg
