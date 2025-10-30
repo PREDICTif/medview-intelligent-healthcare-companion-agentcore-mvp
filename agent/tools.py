@@ -266,6 +266,9 @@ def web_search(query):
         # Perform web search
         docs = web_search_tool.invoke({"query": query})
         
+        print(f"Raw web search response: {docs}")
+        print(f"Type of docs: {type(docs)}")
+        
         if not docs:
             return f"No web search results found for query: {query}"
 
@@ -273,6 +276,9 @@ def web_search(query):
         formatted_results = f"Web Search Results for: {query}\n\n"
         
         for i, doc in enumerate(docs, 1):
+            print(f"Processing doc {i}: {doc}")
+            print(f"Doc type: {type(doc)}")
+            
             content = doc.get("content", "No content available")
             url = doc.get("url", "No URL available")
             title = doc.get("title", "No title available")
@@ -280,6 +286,7 @@ def web_search(query):
             formatted_results += f"Result {i}:\nTitle: {title}\nURL: {url}\nContent: {content}\n\n"
         
         print(f"Retrieved {len(docs)} web search results")
+        print(f"Final formatted results: {formatted_results}")
         return formatted_results
         
     except Exception as e:

@@ -16,8 +16,8 @@ import Alert from '@cloudscape-design/components/alert';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AuthModal from './AuthModal';
-import { getCurrentUser, getIdToken, signOut, AuthUser } from './auth';
-import { invokeAgent } from './agentcore';
+import { getCurrentUser, signOut, AuthUser } from './auth';
+import { invokeAgentStream } from './agentcore';
 import './markdown.css';
 
 interface Message {
@@ -162,23 +162,59 @@ function App() {
     const currentPrompt = prompt;
     setPrompt('');
 
+    // Create initial empty agent message for streaming
+    const agentMessageIndex = messages.length + 1; // +1 because we just added user message
+    const initialAgentMessage: Message = {
+      type: 'agent',
+      content: '',
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, initialAgentMessage]);
+
     try {
-      const data = await invokeAgent({ prompt: currentPrompt });
-
-      const agentMessage: Message = {
-        type: 'agent',
-        content: cleanResponse(data.response || ''),
-        timestamp: new Date()
-      };
-
-      setMessages(prev => [...prev, agentMessage]);
-
-      // Show support prompts after agent responds
-      setShowSupportPrompts(true);
+      // Use streaming for real-time response
+      await invokeAgentStream(
+        { prompt: currentPrompt },
+        // onChunk - called for each streaming chunk
+        (chunk: string) => {
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const agentMsg = newMessages[agentMessageIndex];
+            if (agentMsg && agentMsg.type === 'agent') {
+              agentMsg.content += cleanResponse(chunk);
+            }
+            return newMessages;
+          });
+        },
+        // onComplete - called when streaming is done
+        (fullResponse: string) => {
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const agentMsg = newMessages[agentMessageIndex];
+            if (agentMsg && agentMsg.type === 'agent') {
+              agentMsg.content = cleanResponse(fullResponse);
+            }
+            return newMessages;
+          });
+          setLoading(false);
+          // Show support prompts after agent responds
+          setShowSupportPrompts(true);
+        },
+        // onError - called if streaming fails
+        (error: Error) => {
+          console.error('Streaming error:', error);
+          setError(error.message);
+          setLoading(false);
+          // Remove the empty agent message on error
+          setMessages(prev => prev.slice(0, -1));
+        }
+      );
     } catch (err: any) {
       setError(err.message);
-    } finally {
       setLoading(false);
+      // Remove the empty agent message on error
+      setMessages(prev => prev.slice(0, -1));
     }
   };
 
@@ -187,10 +223,10 @@ function App() {
     // Initial prompts when no messages
     if (messages.length === 0) {
       return [
-        { id: 'calc', text: 'What is 123 + 456?' },
-        { id: 'weather', text: "What's the weather like today?" },
-        { id: 'table', text: 'Create a comparison table of 3 AWS services' },
-        { id: 'math', text: 'Calculate 2048 * 1024 and explain the result' }
+        { id: 'diabetes-basics', text: 'What is diabetes?' },
+        { id: 'symptoms', text: 'What are the symptoms of diabetes?' },
+        { id: 'diet', text: 'What foods should diabetics avoid?' },
+        { id: 'treatment', text: 'How is diabetes treated?' }
       ];
     }
 
@@ -199,30 +235,30 @@ function App() {
     if (lastMessage.type === 'agent') {
       const content = lastMessage.content.toLowerCase();
 
-      // After calculation
-      if (content.includes('result') || content.includes('sum') || content.includes('calculation')) {
+      // After diabetes information
+      if (content.includes('diabetes') || content.includes('blood sugar') || content.includes('insulin')) {
         return [
-          { id: 'another-calc', text: 'Can you do another calculation?' },
-          { id: 'weather-follow', text: "What's the weather?" },
-          { id: 'explain', text: 'Can you explain that in more detail?' }
+          { id: 'complications', text: 'What are the complications of diabetes?' },
+          { id: 'prevention', text: 'How can diabetes be prevented?' },
+          { id: 'types', text: 'What are the different types of diabetes?' }
         ];
       }
 
-      // After weather
-      if (content.includes('weather') || content.includes('sunny') || content.includes('°f')) {
+      // After symptoms
+      if (content.includes('symptoms') || content.includes('thirst') || content.includes('urination')) {
         return [
-          { id: 'calc-follow', text: 'What is 999 + 111?' },
-          { id: 'table-follow', text: 'Show me a table with sample data' },
-          { id: 'thanks', text: 'Thank you!' }
+          { id: 'diagnosis', text: 'How is diabetes diagnosed?' },
+          { id: 'treatment-follow', text: 'What are the treatment options?' },
+          { id: 'diet-follow', text: 'What diet should I follow?' }
         ];
       }
 
-      // After table
-      if (content.includes('|') || content.includes('table')) {
+      // After diet/food information
+      if (content.includes('food') || content.includes('diet') || content.includes('avoid')) {
         return [
-          { id: 'another-table', text: 'Create another table with different data' },
-          { id: 'calc-after-table', text: 'Calculate 15 * 12' },
-          { id: 'format', text: 'Can you format that differently?' }
+          { id: 'exercise', text: 'What exercises are good for diabetics?' },
+          { id: 'monitoring', text: 'How often should I check blood sugar?' },
+          { id: 'meal-planning', text: 'Help me plan diabetic-friendly meals' }
         ];
       }
     }
@@ -230,8 +266,8 @@ function App() {
     // Default follow-up prompts
     return [
       { id: 'more', text: 'Tell me more' },
-      { id: 'calc-default', text: 'Do a calculation' },
-      { id: 'weather-default', text: 'Check the weather' }
+      { id: 'management', text: 'How do I manage diabetes?' },
+      { id: 'lifestyle', text: 'What lifestyle changes should I make?' }
     ];
   };
 
@@ -243,7 +279,11 @@ function App() {
         <TopNavigation
           identity={{
             href: "#",
-            title: "Amazon Bedrock AgentCore Demo"
+            title: "Medview Connect",
+            logo: {
+              src: "/medview-logo.svg",
+              alt: "Medview Connect"
+            }
           }}
           utilities={[
             {
@@ -291,7 +331,11 @@ function App() {
       <TopNavigation
         identity={{
           href: "#",
-          title: "Amazon Bedrock AgentCore Demo"
+          title: "Medview Connect",
+          logo: {
+            src: "/medview-logo.svg",
+            alt: "Medview Connect"
+          }
         }}
         utilities={[
           {
@@ -339,7 +383,7 @@ function App() {
                     <SpaceBetween size="m">
                       {messages.length === 0 ? (
                         <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
-                          Start a conversation with the generative AI assistant by typing a message below
+                          Welcome to Medview Connect! Ask me about diabetes, symptoms, treatments, diet, and healthcare information.
                         </Box>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -520,7 +564,7 @@ function App() {
                         value={prompt}
                         onChange={({ detail }) => setPrompt(detail.value)}
                         onAction={handleSendMessage}
-                        placeholder="Ask a question..."
+                        placeholder="Ask about diabetes, symptoms, treatments, or diet..."
                         actionButtonAriaLabel="Send message"
                         actionButtonIconName="send"
                         disabled={loading}
