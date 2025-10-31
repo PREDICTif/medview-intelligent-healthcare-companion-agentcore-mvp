@@ -189,6 +189,7 @@ export default function PatientRegistration() {
       }
 
       const patientData: PatientData = {
+        patient_id: currentUser.sub,
         medical_record_number: medicalRecordNumber.trim(),
         first_name: firstName.trim(),
         last_name: lastName.trim(),
@@ -210,7 +211,7 @@ export default function PatientRegistration() {
         insurance_provider: insuranceProvider.trim() || undefined,
         insurance_policy_number: insurancePolicyNumber.trim() || undefined,
         insurance_group_number: insuranceGroupNumber.trim() || undefined,
-        created_by: currentUser.username,
+        created_by: currentUser.sub,
       };
 
       const result = await createPatient(patientData);

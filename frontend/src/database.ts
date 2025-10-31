@@ -7,6 +7,7 @@ if (!LAMBDA_FUNCTION_URL) {
 }
 
 export interface PatientData {
+  patient_id: string;
   medical_record_number: string;
   first_name: string;
   last_name: string;

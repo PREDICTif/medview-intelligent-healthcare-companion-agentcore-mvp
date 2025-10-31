@@ -245,7 +245,7 @@ def create_patient(patient_data: Dict[str, Any]):
             }
         
         # Required fields validation
-        required_fields = ['medical_record_number', 'first_name', 'last_name', 'date_of_birth', 'created_by']
+        required_fields = ['patient_id', 'medical_record_number', 'first_name', 'last_name', 'date_of_birth', 'created_by']
         for field in required_fields:
             if not patient_data.get(field):
                 return {
@@ -256,14 +256,14 @@ def create_patient(patient_data: Dict[str, Any]):
         # Build SQL insert statement with parameters
         sql_query = """
             INSERT INTO patients (
-                medical_record_number, first_name, last_name, middle_name,
+                patient_id, medical_record_number, first_name, last_name, middle_name,
                 date_of_birth, gender, phone_primary, phone_secondary, email,
                 address_line1, address_line2, city, state, zip_code, country,
                 emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
                 insurance_provider, insurance_policy_number, insurance_group_number,
                 created_by
             ) VALUES (
-                :medical_record_number, :first_name, :last_name, :middle_name,
+                :patient_id::uuid, :medical_record_number, :first_name, :last_name, :middle_name,
                 :date_of_birth::date, :gender, :phone_primary, :phone_secondary, :email,
                 :address_line1, :address_line2, :city, :state, :zip_code, :country,
                 :emergency_contact_name, :emergency_contact_phone, :emergency_contact_relationship,
@@ -276,6 +276,7 @@ def create_patient(patient_data: Dict[str, Any]):
         # Build parameters list
         parameters = []
         field_mappings = [
+            'patient_id',
             'medical_record_number', 'first_name', 'last_name', 'middle_name',
             'date_of_birth', 'gender', 'phone_primary', 'phone_secondary', 'email',
             'address_line1', 'address_line2', 'city', 'state', 'zip_code', 'country',
@@ -330,6 +331,23 @@ def create_patient(patient_data: Dict[str, Any]):
         
     except Exception as e:
         logger.error(f"Error creating patient: {str(e)}")
+        
+        # Check for duplicate patient_id (PRIMARY KEY violation)
+        if 'duplicate key value violates unique constraint "patients_pkey"' in str(e):
+            return {
+                'status': 'error',
+                'message': 'You already have a patient record. Each user can only register once.',
+                'error_type': 'DuplicatePatient'
+            }
+        
+        # Check for duplicate medical_record_number
+        if 'duplicate key value violates unique constraint' in str(e) and 'medical_record_number' in str(e):
+            return {
+                'status': 'error',
+                'message': 'This Medical Record Number is already in use. Please use a unique MRN.',
+                'error_type': 'DuplicateMRN'
+            }
+        
         return {
             'status': 'error',
             'message': f'Error creating patient: {str(e)}',
@@ -466,6 +484,14 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
         if event.get('action') == 'create_patient':
             # Get patient data from event body
             patient_data = event.get('patient_data', {})
+
+            # ADD THESE DEBUG LOGS:
+            logger.info(f"=== CREATE PATIENT DEBUG ===")
+            logger.info(f"patient_data keys: {list(patient_data.keys())}")
+            logger.info(f"patient_id value: {patient_data.get('patient_id')}")
+            logger.info(f"patient_id type: {type(patient_data.get('patient_id'))}")
+            logger.info(f"created_by value: {patient_data.get('created_by')}")
+            logger.info(f"medical_record_number: {patient_data.get('medical_record_number')}")  
             
             # Also check in body for API Gateway integration
             if not patient_data and event.get('body'):
