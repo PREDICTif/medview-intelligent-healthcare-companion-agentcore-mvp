@@ -1,0 +1,36 @@
+===========================================
+FRONTEND ENVIRONMENT VARIABLES SETUP
+===========================================
+
+Create a file called .env.local in the frontend directory with these variables:
+
+VITE_USER_POOL_ID=us-east-1_XXXXXXXXX
+VITE_USER_POOL_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+VITE_LAMBDA_FUNCTION_URL=https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.lambda-url.us-east-1.on.aws/
+
+===========================================
+HOW TO GET THESE VALUES:
+===========================================
+
+1. COGNITO VALUES (VITE_USER_POOL_ID and VITE_USER_POOL_CLIENT_ID):
+   - AWS Console → Cognito → User Pools
+   - Click your user pool
+   - Copy Pool ID and Client ID from App Integration tab
+
+2. LAMBDA FUNCTION URL:
+   After deploying CDK stack, run:
+   
+   cd cdk
+   cdk deploy
+   
+   Look for the output: DatabaseLambdaFunctionUrl
+   
+   Or get it from CloudFormation:
+   aws cloudformation describe-stacks --stack-name MihcStack \
+     --query 'Stacks[0].Outputs[?OutputKey==`DatabaseLambdaFunctionUrl`].OutputValue' \
+     --output text
+
+===========================================
+IMPORTANT: Restart your dev server after creating .env.local!
+===========================================
+

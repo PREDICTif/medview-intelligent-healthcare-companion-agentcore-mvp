@@ -176,6 +176,9 @@ REGION=$(aws cloudformation describe-stacks --stack-name AgentCoreRuntime --quer
 USER_POOL_ID=$(aws cloudformation describe-stacks --stack-name AgentCoreAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager)
 USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks --stack-name AgentCoreAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager)
 
+# Get Lambda Function URL from MihcStack if it exists
+LAMBDA_FUNCTION_URL=$(aws cloudformation describe-stacks --stack-name MihcStack --query "Stacks[0].Outputs[?OutputKey=='DatabaseLambdaFunctionUrl'].OutputValue" --output text --no-cli-pager 2>/dev/null || echo "")
+
 if [ -z "$AGENT_RUNTIME_ARN" ]; then
     echo -e "\033[0;31mFailed to get Agent Runtime ARN from stack outputs\033[0m"
     exit 1
@@ -196,8 +199,14 @@ echo -e "\033[0;32mRegion: $REGION\033[0m"
 echo -e "\033[0;32mUser Pool ID: $USER_POOL_ID\033[0m"
 echo -e "\033[0;32mUser Pool Client ID: $USER_POOL_CLIENT_ID\033[0m"
 
-# Build frontend with AgentCore Runtime ARN and Cognito config
-./scripts/build-frontend.sh "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$AGENT_RUNTIME_ARN" "$REGION"
+if [ -n "$LAMBDA_FUNCTION_URL" ]; then
+    echo -e "\033[0;32mLambda Function URL: $LAMBDA_FUNCTION_URL\033[0m"
+else
+    echo -e "\033[0;33mWarning: Lambda Function URL not found (patient registration features will not work)\033[0m"
+fi
+
+# Build frontend with AgentCore Runtime ARN, Cognito config, and Lambda URL
+./scripts/build-frontend.sh "$USER_POOL_ID" "$USER_POOL_CLIENT_ID" "$AGENT_RUNTIME_ARN" "$REGION" "$LAMBDA_FUNCTION_URL"
 
 # Deploy frontend stack
 pushd cdk > /dev/null

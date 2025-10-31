@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '@cloudscape-design/components/app-layout';
 import TopNavigation from '@cloudscape-design/components/top-navigation';
+import SideNavigation from '@cloudscape-design/components/side-navigation';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Container from '@cloudscape-design/components/container';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -16,6 +17,7 @@ import Alert from '@cloudscape-design/components/alert';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AuthModal from './AuthModal';
+import PatientRegistration from './PatientRegistration';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import { invokeAgentStream } from './agentcore';
 import './markdown.css';
@@ -36,7 +38,10 @@ interface MessageFeedback {
   };
 }
 
+type NavigationItem = 'chat' | 'patient-registration';
+
 function App() {
+  const [activePage, setActivePage] = useState<NavigationItem>('chat');
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -46,6 +51,7 @@ function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [messageFeedback, setMessageFeedback] = useState<MessageFeedback>({});
   const [showSupportPrompts, setShowSupportPrompts] = useState(true);
+  const [navigationOpen, setNavigationOpen] = useState(true);
 
   useEffect(() => {
     checkAuth();
@@ -273,6 +279,234 @@ function App() {
 
 
 
+  const renderContent = () => {
+    if (activePage === 'patient-registration') {
+      return (
+        <ContentLayout defaultPadding>
+          <PatientRegistration />
+        </ContentLayout>
+      );
+    }
+
+    // Default: Chat page
+    return (
+      <ContentLayout defaultPadding>
+        <Grid
+          gridDefinition={[
+            { colspan: { default: 12, xs: 1, s: 2 } },
+            { colspan: { default: 12, xs: 10, s: 8 } },
+            { colspan: { default: 12, xs: 1, s: 2 } }
+          ]}
+        >
+          <div />
+          <SpaceBetween size="l">
+            {error && (
+              <Alert type="error" dismissible onDismiss={() => setError('')}>
+                {error}
+              </Alert>
+            )}
+
+            <Container>
+              <div role="region" aria-label="Chat">
+                <SpaceBetween size="m">
+                  {messages.length === 0 ? (
+                    <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
+                      Welcome to Medview Connect! Ask me about diabetes, symptoms, treatments, diet, and healthcare information.
+                    </Box>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      {messages.map((message, index) => {
+                        const feedback = messageFeedback[index];
+                        const isAgent = message.type === 'agent';
+
+                        return (
+                          <div key={index} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                            {isAgent && (
+                              <Avatar
+                                ariaLabel="Generative AI assistant"
+                                tooltipText="Generative AI assistant"
+                                iconName="gen-ai"
+                                color="gen-ai"
+                              />
+                            )}
+                            <div style={{ flex: 1 }}>
+                              <ChatBubble
+                                type={message.type === 'user' ? 'outgoing' : 'incoming'}
+                                ariaLabel={`${message.type === 'user' ? 'User' : 'Generative AI assistant'} message`}
+                                avatar={message.type === 'user' ? <div /> : undefined}
+                              >
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkGfm]}
+                                  components={{
+                                    // Style code blocks
+                                    code: ({ className, children }: any) => {
+                                      const inline = !className;
+                                      return inline ? (
+                                        <code style={{
+                                          backgroundColor: '#f4f4f4',
+                                          padding: '2px 6px',
+                                          borderRadius: '3px',
+                                          fontFamily: 'monospace',
+                                          fontSize: '0.9em'
+                                        }}>
+                                          {children}
+                                        </code>
+                                      ) : (
+                                        <pre style={{
+                                          backgroundColor: '#f4f4f4',
+                                          padding: '12px',
+                                          borderRadius: '6px',
+                                          overflow: 'auto',
+                                          fontFamily: 'monospace',
+                                          fontSize: '0.9em'
+                                        }}>
+                                          <code className={className}>
+                                            {children}
+                                          </code>
+                                        </pre>
+                                      );
+                                    },
+                                    // Style links
+                                    a: ({ children, href }: any) => (
+                                      <a href={href} style={{ color: '#0972d3' }} target="_blank" rel="noopener noreferrer">
+                                        {children}
+                                      </a>
+                                    ),
+                                    // Style lists
+                                    ul: ({ children }: any) => (
+                                      <ul style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+                                        {children}
+                                      </ul>
+                                    ),
+                                    ol: ({ children }: any) => (
+                                      <ol style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+                                        {children}
+                                      </ol>
+                                    ),
+                                    // Style paragraphs
+                                    p: ({ children }: any) => (
+                                      <p style={{ marginTop: '8px', marginBottom: '8px' }}>
+                                        {children}
+                                      </p>
+                                    ),
+                                  }}
+                                >
+                                  {message.content}
+                                </ReactMarkdown>
+                              </ChatBubble>
+
+                              {isAgent && (
+                                <div style={{ marginTop: '8px' }}>
+                                  <ButtonGroup
+                                    variant="icon"
+                                    ariaLabel="Message actions"
+                                    items={[
+                                      {
+                                        type: 'icon-button',
+                                        id: 'thumbs-up',
+                                        iconName: feedback?.feedback === 'helpful' ? 'thumbs-up-filled' : 'thumbs-up',
+                                        text: 'Helpful',
+                                        disabled: feedback?.submitting || !!feedback?.feedback,
+                                        loading: feedback?.submitting && feedback?.feedback !== 'not-helpful',
+                                        disabledReason: feedback?.feedback === 'helpful'
+                                          ? '"Helpful" feedback has been submitted.'
+                                          : feedback?.feedback === 'not-helpful'
+                                            ? '"Helpful" option is unavailable after "not helpful" feedback submitted.'
+                                            : undefined,
+                                      },
+                                      {
+                                        type: 'icon-button',
+                                        id: 'thumbs-down',
+                                        iconName: feedback?.feedback === 'not-helpful' ? 'thumbs-down-filled' : 'thumbs-down',
+                                        text: 'Not helpful',
+                                        disabled: feedback?.submitting || !!feedback?.feedback,
+                                        loading: feedback?.submitting && feedback?.feedback !== 'helpful',
+                                        disabledReason: feedback?.feedback === 'not-helpful'
+                                          ? '"Not helpful" feedback has been submitted.'
+                                          : feedback?.feedback === 'helpful'
+                                            ? '"Not helpful" option is unavailable after "helpful" feedback submitted.'
+                                            : undefined,
+                                      },
+                                      {
+                                        type: 'icon-button',
+                                        id: 'copy',
+                                        iconName: 'copy',
+                                        text: 'Copy',
+                                        popoverFeedback: feedback?.showCopySuccess ? (
+                                          <StatusIndicator type="success">
+                                            Copied
+                                          </StatusIndicator>
+                                        ) : undefined,
+                                      }
+                                    ]}
+                                    onItemClick={({ detail }) => {
+                                      if (detail.id === 'thumbs-up') {
+                                        handleFeedback(index, 'helpful');
+                                      } else if (detail.id === 'thumbs-down') {
+                                        handleFeedback(index, 'not-helpful');
+                                      } else if (detail.id === 'copy') {
+                                        handleCopy(index, message.content);
+                                      }
+                                    }}
+                                  />
+                                  {feedback?.feedback && (
+                                    <Box margin={{ top: 'xs' }} color="text-status-info" fontSize="body-s">
+                                      Feedback submitted
+                                    </Box>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {loading && (
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                          <Avatar
+                            ariaLabel="Generative AI assistant"
+                            tooltipText="Generative AI assistant"
+                            iconName="gen-ai"
+                            color="gen-ai"
+                            loading={true}
+                          />
+                          <Box color="text-body-secondary">
+                            Generating a response
+                          </Box>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showSupportPrompts && !loading && (
+                    <SupportPromptGroup
+                      onItemClick={({ detail }) => handleSupportPromptClick(
+                        getSupportPrompts().find(p => p.id === detail.id)?.text || ''
+                      )}
+                      ariaLabel="Suggested prompts"
+                      alignment="horizontal"
+                      items={getSupportPrompts()}
+                    />
+                  )}
+
+                  <PromptInput
+                    value={prompt}
+                    onChange={({ detail }) => setPrompt(detail.value)}
+                    onAction={handleSendMessage}
+                    placeholder="Ask about diabetes, symptoms, treatments, or diet..."
+                    actionButtonAriaLabel="Send message"
+                    actionButtonIconName="send"
+                    disabled={loading}
+                  />
+                </SpaceBetween>
+              </div>
+            </Container>
+          </SpaceBetween>
+          <div />
+        </Grid>
+      </ContentLayout>
+    );
+  };
+
   if (checkingAuth) {
     return (
       <>
@@ -357,226 +591,47 @@ function App() {
         }}
       />
       <AppLayout
-        navigationHide={true}
+        navigation={
+          <SideNavigation
+            activeHref={`#${activePage}`}
+            header={{
+              href: "#",
+              text: "Medview Connect"
+            }}
+            onFollow={(event) => {
+              event.preventDefault();
+              const page = event.detail.href.substring(1) as NavigationItem;
+              setActivePage(page);
+            }}
+            items={[
+              {
+                type: "link",
+                text: "AI Assistant",
+                href: "#chat"
+              },
+              {
+                type: "divider"
+              },
+              {
+                type: "section",
+                text: "Patient Management",
+                items: [
+                  {
+                    type: "link",
+                    text: "Register Patient",
+                    href: "#patient-registration"
+                  }
+                ]
+              }
+            ]}
+          />
+        }
+        navigationOpen={navigationOpen}
+        onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
         toolsHide={true}
         disableContentPaddings
         contentType="default"
-        content={
-          <ContentLayout defaultPadding>
-            <Grid
-              gridDefinition={[
-                { colspan: { default: 12, xs: 1, s: 2 } },
-                { colspan: { default: 12, xs: 10, s: 8 } },
-                { colspan: { default: 12, xs: 1, s: 2 } }
-              ]}
-            >
-              <div />
-              <SpaceBetween size="l">
-                {error && (
-                  <Alert type="error" dismissible onDismiss={() => setError('')}>
-                    {error}
-                  </Alert>
-                )}
-
-                <Container>
-                  <div role="region" aria-label="Chat">
-                    <SpaceBetween size="m">
-                      {messages.length === 0 ? (
-                        <Box textAlign="center" padding={{ vertical: 'xxl' }} color="text-body-secondary">
-                          Welcome to Medview Connect! Ask me about diabetes, symptoms, treatments, diet, and healthcare information.
-                        </Box>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                          {messages.map((message, index) => {
-                            const feedback = messageFeedback[index];
-                            const isAgent = message.type === 'agent';
-
-                            return (
-                              <div key={index} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                                {isAgent && (
-                                  <Avatar
-                                    ariaLabel="Generative AI assistant"
-                                    tooltipText="Generative AI assistant"
-                                    iconName="gen-ai"
-                                    color="gen-ai"
-                                  />
-                                )}
-                                <div style={{ flex: 1 }}>
-                                  <ChatBubble
-                                    type={message.type === 'user' ? 'outgoing' : 'incoming'}
-                                    ariaLabel={`${message.type === 'user' ? 'User' : 'Generative AI assistant'} message`}
-                                    avatar={message.type === 'user' ? <div /> : undefined}
-                                  >
-                                    <ReactMarkdown
-                                      remarkPlugins={[remarkGfm]}
-                                      components={{
-                                        // Style code blocks
-                                        code: ({ className, children }: any) => {
-                                          const inline = !className;
-                                          return inline ? (
-                                            <code style={{
-                                              backgroundColor: '#f4f4f4',
-                                              padding: '2px 6px',
-                                              borderRadius: '3px',
-                                              fontFamily: 'monospace',
-                                              fontSize: '0.9em'
-                                            }}>
-                                              {children}
-                                            </code>
-                                          ) : (
-                                            <pre style={{
-                                              backgroundColor: '#f4f4f4',
-                                              padding: '12px',
-                                              borderRadius: '6px',
-                                              overflow: 'auto',
-                                              fontFamily: 'monospace',
-                                              fontSize: '0.9em'
-                                            }}>
-                                              <code className={className}>
-                                                {children}
-                                              </code>
-                                            </pre>
-                                          );
-                                        },
-                                        // Style links
-                                        a: ({ children, href }: any) => (
-                                          <a href={href} style={{ color: '#0972d3' }} target="_blank" rel="noopener noreferrer">
-                                            {children}
-                                          </a>
-                                        ),
-                                        // Style lists
-                                        ul: ({ children }: any) => (
-                                          <ul style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
-                                            {children}
-                                          </ul>
-                                        ),
-                                        ol: ({ children }: any) => (
-                                          <ol style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
-                                            {children}
-                                          </ol>
-                                        ),
-                                        // Style paragraphs
-                                        p: ({ children }: any) => (
-                                          <p style={{ marginTop: '8px', marginBottom: '8px' }}>
-                                            {children}
-                                          </p>
-                                        ),
-                                      }}
-                                    >
-                                      {message.content}
-                                    </ReactMarkdown>
-                                  </ChatBubble>
-
-                                  {isAgent && (
-                                    <div style={{ marginTop: '8px' }}>
-                                      <ButtonGroup
-                                        variant="icon"
-                                        ariaLabel="Message actions"
-                                        items={[
-                                          {
-                                            type: 'icon-button',
-                                            id: 'thumbs-up',
-                                            iconName: feedback?.feedback === 'helpful' ? 'thumbs-up-filled' : 'thumbs-up',
-                                            text: 'Helpful',
-                                            disabled: feedback?.submitting || !!feedback?.feedback,
-                                            loading: feedback?.submitting && feedback?.feedback !== 'not-helpful',
-                                            disabledReason: feedback?.feedback === 'helpful'
-                                              ? '"Helpful" feedback has been submitted.'
-                                              : feedback?.feedback === 'not-helpful'
-                                                ? '"Helpful" option is unavailable after "not helpful" feedback submitted.'
-                                                : undefined,
-                                          },
-                                          {
-                                            type: 'icon-button',
-                                            id: 'thumbs-down',
-                                            iconName: feedback?.feedback === 'not-helpful' ? 'thumbs-down-filled' : 'thumbs-down',
-                                            text: 'Not helpful',
-                                            disabled: feedback?.submitting || !!feedback?.feedback,
-                                            loading: feedback?.submitting && feedback?.feedback !== 'helpful',
-                                            disabledReason: feedback?.feedback === 'not-helpful'
-                                              ? '"Not helpful" feedback has been submitted.'
-                                              : feedback?.feedback === 'helpful'
-                                                ? '"Not helpful" option is unavailable after "helpful" feedback submitted.'
-                                                : undefined,
-                                          },
-                                          {
-                                            type: 'icon-button',
-                                            id: 'copy',
-                                            iconName: 'copy',
-                                            text: 'Copy',
-                                            popoverFeedback: feedback?.showCopySuccess ? (
-                                              <StatusIndicator type="success">
-                                                Copied
-                                              </StatusIndicator>
-                                            ) : undefined,
-                                          }
-                                        ]}
-                                        onItemClick={({ detail }) => {
-                                          if (detail.id === 'thumbs-up') {
-                                            handleFeedback(index, 'helpful');
-                                          } else if (detail.id === 'thumbs-down') {
-                                            handleFeedback(index, 'not-helpful');
-                                          } else if (detail.id === 'copy') {
-                                            handleCopy(index, message.content);
-                                          }
-                                        }}
-                                      />
-                                      {feedback?.feedback && (
-                                        <Box margin={{ top: 'xs' }} color="text-status-info" fontSize="body-s">
-                                          Feedback submitted
-                                        </Box>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                          {loading && (
-                            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                              <Avatar
-                                ariaLabel="Generative AI assistant"
-                                tooltipText="Generative AI assistant"
-                                iconName="gen-ai"
-                                color="gen-ai"
-                                loading={true}
-                              />
-                              <Box color="text-body-secondary">
-                                Generating a response
-                              </Box>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {showSupportPrompts && !loading && (
-                        <SupportPromptGroup
-                          onItemClick={({ detail }) => handleSupportPromptClick(
-                            getSupportPrompts().find(p => p.id === detail.id)?.text || ''
-                          )}
-                          ariaLabel="Suggested prompts"
-                          alignment="horizontal"
-                          items={getSupportPrompts()}
-                        />
-                      )}
-
-                      <PromptInput
-                        value={prompt}
-                        onChange={({ detail }) => setPrompt(detail.value)}
-                        onAction={handleSendMessage}
-                        placeholder="Ask about diabetes, symptoms, treatments, or diet..."
-                        actionButtonAriaLabel="Send message"
-                        actionButtonIconName="send"
-                        disabled={loading}
-                      />
-                    </SpaceBetween>
-                  </div>
-                </Container>
-              </SpaceBetween>
-              <div />
-            </Grid>
-          </ContentLayout>
-        }
+        content={renderContent()}
       />
     </>
   );

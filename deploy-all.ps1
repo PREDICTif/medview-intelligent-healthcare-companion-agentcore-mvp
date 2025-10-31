@@ -197,6 +197,13 @@ $region = aws cloudformation describe-stacks --stack-name AgentCoreRuntime --que
 $userPoolId = aws cloudformation describe-stacks --stack-name AgentCoreAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text --no-cli-pager
 $userPoolClientId = aws cloudformation describe-stacks --stack-name AgentCoreAuth --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" --output text --no-cli-pager
 
+# Get Lambda Function URL from MihcStack if it exists
+try {
+    $lambdaFunctionUrl = aws cloudformation describe-stacks --stack-name MihcStack --query "Stacks[0].Outputs[?OutputKey=='DatabaseLambdaFunctionUrl'].OutputValue" --output text --no-cli-pager 2>$null
+} catch {
+    $lambdaFunctionUrl = ""
+}
+
 if ([string]::IsNullOrEmpty($agentRuntimeArn)) {
     Write-Host "Failed to get Agent Runtime ARN from stack outputs" -ForegroundColor Red
     exit 1
@@ -217,8 +224,14 @@ Write-Host "Region: $region" -ForegroundColor Green
 Write-Host "User Pool ID: $userPoolId" -ForegroundColor Green
 Write-Host "User Pool Client ID: $userPoolClientId" -ForegroundColor Green
 
-# Build frontend with AgentCore Runtime ARN and Cognito config
-& .\scripts\build-frontend.ps1 -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -AgentRuntimeArn $agentRuntimeArn -Region $region
+if (-not [string]::IsNullOrEmpty($lambdaFunctionUrl)) {
+    Write-Host "Lambda Function URL: $lambdaFunctionUrl" -ForegroundColor Green
+} else {
+    Write-Host "Warning: Lambda Function URL not found (patient registration features will not work)" -ForegroundColor Yellow
+}
+
+# Build frontend with AgentCore Runtime ARN, Cognito config, and Lambda URL
+& .\scripts\build-frontend.ps1 -UserPoolId $userPoolId -UserPoolClientId $userPoolClientId -AgentRuntimeArn $agentRuntimeArn -Region $region -LambdaFunctionUrl $lambdaFunctionUrl
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Frontend build failed" -ForegroundColor Red
