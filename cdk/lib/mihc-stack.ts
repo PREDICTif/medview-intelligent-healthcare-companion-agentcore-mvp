@@ -287,6 +287,12 @@ export class MihcStack extends cdk.Stack {
       })
     );
 
+    // Add Lambda Function URL for HTTP access
+    // NOTE: Using NONE for development. For production, use AWS_IAM with proper authorization
+    const functionUrl = this.databaseLambda.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE, // No auth required - DEVELOPMENT ONLY
+    });
+
     new cdk.CfnOutput(this, "RawBucketName", {
       value: this.rawBucket.bucketName,
     });
@@ -342,6 +348,10 @@ export class MihcStack extends cdk.Stack {
     new cdk.CfnOutput(this, "DatabaseLambdaFunctionArn", {
       value: this.databaseLambda.functionArn,
       description: "ARN of the database Lambda function",
+    });
+    new cdk.CfnOutput(this, "DatabaseLambdaFunctionUrl", {
+      value: functionUrl.url,
+      description: "HTTP endpoint URL for the database Lambda function",
     });
   }
 }

@@ -9,7 +9,10 @@ param(
     [string]$AgentRuntimeArn,
     
     [Parameter(Mandatory=$true)]
-    [string]$Region
+    [string]$Region,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$LambdaFunctionUrl = ""
 )
 
 Write-Host "Building frontend with:"
@@ -23,6 +26,14 @@ $env:VITE_USER_POOL_ID = $UserPoolId
 $env:VITE_USER_POOL_CLIENT_ID = $UserPoolClientId
 $env:VITE_AGENT_RUNTIME_ARN = $AgentRuntimeArn
 $env:VITE_REGION = $Region
+
+# Set Lambda Function URL if provided
+if (-not [string]::IsNullOrEmpty($LambdaFunctionUrl)) {
+    Write-Host "  Lambda Function URL: $LambdaFunctionUrl"
+    $env:VITE_LAMBDA_FUNCTION_URL = $LambdaFunctionUrl
+} else {
+    Write-Host "  Lambda Function URL: Not provided (patient registration will not work)" -ForegroundColor Yellow
+}
 
 # Build frontend
 Set-Location frontend

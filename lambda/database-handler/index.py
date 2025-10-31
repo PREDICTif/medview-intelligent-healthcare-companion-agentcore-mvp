@@ -231,6 +231,129 @@ def get_patient_by_id(patient_id=None, medical_record_number=None):
             'error_type': type(e).__name__
         }
 
+def create_patient(patient_data: Dict[str, Any]):
+    """Create a new patient record in the database."""
+    try:
+        db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
+        secret_arn = os.environ.get('DB_SECRET_ARN')
+        database_name = os.environ.get('DB_NAME', 'medical_records')
+        
+        if not db_cluster_arn or not secret_arn:
+            return {
+                'status': 'error',
+                'message': 'Missing required environment variables'
+            }
+        
+        # Required fields validation
+        required_fields = ['patient_id', 'medical_record_number', 'first_name', 'last_name', 'date_of_birth', 'created_by']
+        for field in required_fields:
+            if not patient_data.get(field):
+                return {
+                    'status': 'error',
+                    'message': f'Missing required field: {field}'
+                }
+        
+        # Build SQL insert statement with parameters
+        sql_query = """
+            INSERT INTO patients (
+                patient_id, medical_record_number, first_name, last_name, middle_name,
+                date_of_birth, gender, phone_primary, phone_secondary, email,
+                address_line1, address_line2, city, state, zip_code, country,
+                emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+                insurance_provider, insurance_policy_number, insurance_group_number,
+                created_by
+            ) VALUES (
+                :patient_id::uuid, :medical_record_number, :first_name, :last_name, :middle_name,
+                :date_of_birth::date, :gender, :phone_primary, :phone_secondary, :email,
+                :address_line1, :address_line2, :city, :state, :zip_code, :country,
+                :emergency_contact_name, :emergency_contact_phone, :emergency_contact_relationship,
+                :insurance_provider, :insurance_policy_number, :insurance_group_number,
+                :created_by::uuid
+            )
+            RETURNING patient_id, medical_record_number, first_name, last_name, created_at
+        """
+        
+        # Build parameters list
+        parameters = []
+        field_mappings = [
+            'patient_id',
+            'medical_record_number', 'first_name', 'last_name', 'middle_name',
+            'date_of_birth', 'gender', 'phone_primary', 'phone_secondary', 'email',
+            'address_line1', 'address_line2', 'city', 'state', 'zip_code', 'country',
+            'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
+            'insurance_provider', 'insurance_policy_number', 'insurance_group_number',
+            'created_by'
+        ]
+        
+        for field in field_mappings:
+            value = patient_data.get(field)
+            if value is not None and value != '':
+                parameters.append({
+                    'name': field,
+                    'value': {'stringValue': str(value)}
+                })
+            else:
+                parameters.append({
+                    'name': field,
+                    'value': {'isNull': True}
+                })
+        
+        # Execute insert
+        response = rds_data_client.execute_statement(
+            resourceArn=db_cluster_arn,
+            secretArn=secret_arn,
+            database=database_name,
+            sql=sql_query,
+            parameters=parameters
+        )
+        
+        # Parse the returned patient data
+        if 'records' in response and len(response['records']) > 0:
+            record = response['records'][0]
+            patient = {
+                'patient_id': record[0].get('stringValue'),
+                'medical_record_number': record[1].get('stringValue'),
+                'first_name': record[2].get('stringValue'),
+                'last_name': record[3].get('stringValue'),
+                'created_at': record[4].get('stringValue')
+            }
+            
+            return {
+                'status': 'success',
+                'message': 'Patient created successfully',
+                'patient': patient
+            }
+        else:
+            return {
+                'status': 'error',
+                'message': 'Failed to create patient - no data returned'
+            }
+        
+    except Exception as e:
+        logger.error(f"Error creating patient: {str(e)}")
+        
+        # Check for duplicate patient_id (PRIMARY KEY violation)
+        if 'duplicate key value violates unique constraint "patients_pkey"' in str(e):
+            return {
+                'status': 'error',
+                'message': 'You already have a patient record. Each user can only register once.',
+                'error_type': 'DuplicatePatient'
+            }
+        
+        # Check for duplicate medical_record_number
+        if 'duplicate key value violates unique constraint' in str(e) and 'medical_record_number' in str(e):
+            return {
+                'status': 'error',
+                'message': 'This Medical Record Number is already in use. Please use a unique MRN.',
+                'error_type': 'DuplicateMRN'
+            }
+        
+        return {
+            'status': 'error',
+            'message': f'Error creating patient: {str(e)}',
+            'error_type': type(e).__name__
+        }
+
 def test_database_connection():
     """Test database connectivity using RDS Data API."""
     try:
@@ -280,6 +403,14 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     
     try:
         logger.info(f"Received event: {json.dumps(event)}")
+        # Parse body for Lambda Function URL requests
+        if event.get('body'):
+            try:
+                body_data = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+                # Merge body data into event for easier access
+                event.update(body_data)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Could not parse request body")
         
         # Add CORS headers
         headers = {
@@ -349,6 +480,43 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'body': json.dumps(patient_result)
             }
         
+        # Create new patient
+        if event.get('action') == 'create_patient':
+            # Get patient data from event body
+            patient_data = event.get('patient_data', {})
+
+            # ADD THESE DEBUG LOGS:
+            logger.info(f"=== CREATE PATIENT DEBUG ===")
+            logger.info(f"patient_data keys: {list(patient_data.keys())}")
+            logger.info(f"patient_id value: {patient_data.get('patient_id')}")
+            logger.info(f"patient_id type: {type(patient_data.get('patient_id'))}")
+            logger.info(f"created_by value: {patient_data.get('created_by')}")
+            logger.info(f"medical_record_number: {patient_data.get('medical_record_number')}")  
+            
+            # Also check in body for API Gateway integration
+            if not patient_data and event.get('body'):
+                try:
+                    body_data = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+                    patient_data = body_data.get('patient_data', body_data)
+                except json.JSONDecodeError:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'status': 'error',
+                            'message': 'Invalid JSON in request body'
+                        })
+                    }
+            
+            create_result = create_patient(patient_data)
+            status_code = 201 if create_result['status'] == 'success' else 500
+            
+            return {
+                'statusCode': status_code,
+                'headers': headers,
+                'body': json.dumps(create_result)
+            }
+        
 
         
         # List all tables in the database
@@ -385,7 +553,7 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
             'headers': headers,
             'body': json.dumps({
                 'message': 'Database handler ready',
-                'available_actions': ['health_check', 'test_db_connection', 'get_patients', 'get_patient_by_id', 'list_tables'],
+                'available_actions': ['health_check', 'test_db_connection', 'get_patients', 'get_patient_by_id', 'create_patient', 'list_tables'],
                 'event_keys': list(event.keys()),
                 'method': event.get('httpMethod', 'unknown'),
                 'resource': event.get('resource', 'unknown')
