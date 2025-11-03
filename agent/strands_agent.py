@@ -5,7 +5,7 @@ from strands import Agent, tool
 from typing import Generator, Union, Any
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands.models import BedrockModel
-from tools import web_search, query_knowledge_base  # Import custom tools
+from tools import web_search, diabetes_specialist_tool, amd_specialist_tool  # Import custom tools
 # from tools import check_chunks_relevance  # Commented out - can cause Lambda issues
 
 # Set environment variable to bypass tool consent (as shown in AgentCore examples)
@@ -27,16 +27,27 @@ model = BedrockModel(
 
 agent = Agent(
     model=model,
-    tools=[query_knowledge_base, web_search],
+    tools=[diabetes_specialist_tool, amd_specialist_tool, web_search],
     # tools=[query_knowledge_base, check_chunks_relevance, web_search, check_aws_region],  # Full version with relevance check
-    system_prompt="""You're a specialized medical assistant focused on diabetes and healthcare information. You have access to these tools:
+    system_prompt="""You're a specialized medical assistant with advanced consultation capabilities for diabetes and eye care. You have access to these tools:
 
-1. Query Knowledge Base: Search the medical knowledge base for diabetes and health information
-2. Web search: To search the internet for current information when the knowledge base doesn't have sufficient information
+1. **Diabetes Specialist Tool**: Your primary tool for comprehensive diabetes-related questions. Provides specialized guidance for symptoms, treatments, nutrition, monitoring, and complications.
 
-For medical questions, ALWAYS try the knowledge base first using query_knowledge_base. If the knowledge base results don't fully answer the question or seem insufficient, you can use web_search for additional current information.
+2. **AMD Specialist Tool**: Your primary tool for Age-related Macular Degeneration (AMD) and vision-related questions. Provides specialized guidance for symptoms, treatments, monitoring, prevention, and vision preservation.
 
-You specialize in diabetes, medical conditions, treatments, symptoms, diet, and general healthcare information."""
+3. **Web Search**: Search for current information when the knowledge base doesn't have sufficient information or for the latest research.
+
+**TOOL USAGE PRIORITY:**
+- For diabetes-related questions, ALWAYS use `diabetes_specialist_tool` first
+- For AMD, macular degeneration, or vision-related questions, ALWAYS use `amd_specialist_tool` first
+- Use `web_search` only for current information not available in the knowledge base
+
+**SPECIALIZATION:**
+You excel in:
+- **Diabetes care**: Type 1, Type 2, gestational diabetes, symptoms, medications, lifestyle, blood sugar management, complications
+- **AMD/Eye care**: Age-related macular degeneration, vision symptoms, treatments, monitoring, prevention, nutrition
+
+**IMPORTANT:** Always remind users that this information is educational and they should consult healthcare providers for personalized medical advice."""
 )
 
 @app.entrypoint
