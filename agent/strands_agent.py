@@ -6,6 +6,7 @@ from typing import Generator, Union, Any
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands.models import BedrockModel
 from tools import web_search, diabetes_specialist_tool, amd_specialist_tool  # Import custom tools
+from prompts import AGENT_SYSTEM_PROMPT  # Import centralized prompts
 # from tools import check_chunks_relevance  # Commented out - can cause Lambda issues
 
 # Set environment variable to bypass tool consent (as shown in AgentCore examples)
@@ -29,25 +30,7 @@ agent = Agent(
     model=model,
     tools=[diabetes_specialist_tool, amd_specialist_tool, web_search],
     # tools=[query_knowledge_base, check_chunks_relevance, web_search, check_aws_region],  # Full version with relevance check
-    system_prompt="""You're a specialized medical assistant with advanced consultation capabilities for diabetes and eye care. You have access to these tools:
-
-1. **Diabetes Specialist Tool**: Your primary tool for comprehensive diabetes-related questions. Provides specialized guidance for symptoms, treatments, nutrition, monitoring, and complications.
-
-2. **AMD Specialist Tool**: Your primary tool for Age-related Macular Degeneration (AMD) and vision-related questions. Provides specialized guidance for symptoms, treatments, monitoring, prevention, and vision preservation.
-
-3. **Web Search**: Search for current information when the knowledge base doesn't have sufficient information or for the latest research.
-
-**TOOL USAGE PRIORITY:**
-- For diabetes-related questions, ALWAYS use `diabetes_specialist_tool` first
-- For AMD, macular degeneration, or vision-related questions, ALWAYS use `amd_specialist_tool` first
-- Use `web_search` only for current information not available in the knowledge base
-
-**SPECIALIZATION:**
-You excel in:
-- **Diabetes care**: Type 1, Type 2, gestational diabetes, symptoms, medications, lifestyle, blood sugar management, complications
-- **AMD/Eye care**: Age-related macular degeneration, vision symptoms, treatments, monitoring, prevention, nutrition
-
-**IMPORTANT:** Always remind users that this information is educational and they should consult healthcare providers for personalized medical advice."""
+    system_prompt=AGENT_SYSTEM_PROMPT
 )
 
 @app.entrypoint
@@ -97,8 +80,16 @@ async def strands_agent_bedrock(payload, context):
             # Get the agent stream using async method
             agent_stream = agent.stream_async(user_input)
             
-            # Stream events as they come
+            # Stream events with garbage filtering - WORKING APPROACH
             async for event in agent_stream:
+                # Convert event to string to check for garbage
+                event_str = str(event)
+                
+                # If it contains obvious garbage metadata, skip it
+                if any(garbage in event_str for garbage in ['object at 0x', 'UUID(', 'event_loop_cycle_id', 'agent']):
+                    continue
+                
+                # Otherwise yield the event as normal
                 yield event
                 
         except Exception as e:

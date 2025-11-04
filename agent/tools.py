@@ -7,6 +7,21 @@ import json
 import os
 import asyncio, re
 from strands import Agent, tool
+from prompts import (
+    DIABETES_CONSULTATION_FRAMEWORKS, 
+    DIABETES_CLINICAL_RECOMMENDATIONS,
+    DIABETES_DISCLAIMER,
+    DIABETES_CONSULTATION_TEMPLATE,
+    DIABETES_KEYWORDS,
+    AMD_CONSULTATION_FRAMEWORKS,
+    AMD_CLINICAL_RECOMMENDATIONS,
+    AMD_URGENT_REFERRAL_INDICATORS,
+    AMD_DISCLAIMER,
+    AMD_CONSULTATION_TEMPLATE,
+    AMD_KEYWORDS,
+    get_consultation_type,
+    format_patient_context
+)
 # Try different import locations for Document class (LangChain versions vary)
 try:
     from langchain_core.documents import Document
@@ -25,7 +40,14 @@ except ImportError:
 # from ragas.metrics import LLMContextPrecisionWithoutReference
 # from ragas.llms import LangchainLLMWrapper
 # from ragas.embeddings import LangchainEmbeddingsWrapper
-from langchain_tavily import TavilySearch
+# Try to import TavilySearch, make it optional for local testing
+try:
+    from langchain_tavily import TavilySearch
+    TAVILY_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: langchain_tavily not available. Web search will be disabled.")
+    TavilySearch = None
+    TAVILY_AVAILABLE = False
 
 # RAGAS evaluation setup (commented out)
 # eval_modelId = 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
@@ -52,16 +74,18 @@ except ImportError:
 # Get TAVILY_API_KEY from environment
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
 
-# Initialize Tavily search tool with the modern API (only if API key is available)
+# Initialize Tavily search tool with the modern API (only if available and API key is set)
 web_search_tool = None
-if TAVILY_API_KEY:
+if TAVILY_AVAILABLE and TAVILY_API_KEY:
     try:
         web_search_tool = TavilySearch(api_key=TAVILY_API_KEY, max_results=3)
         print("✅ Tavily search tool initialized")
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize Tavily search tool: {e}")
         web_search_tool = None
-else:
+elif not TAVILY_AVAILABLE:
+    print("⚠️ Warning: langchain_tavily not installed. Web search will not be available.")
+elif not TAVILY_API_KEY:
     print("⚠️ Warning: TAVILY_API_KEY not found. Web search will not be available.")
 
 def _query_knowledge_base_internal(query: str, kb_name: str = "diabetes-agent-kb"):
@@ -275,95 +299,26 @@ def diabetes_specialist_tool(patient_query: str, patient_context: str = ""):
         kb_results = _query_knowledge_base_internal(enhanced_query, "diabetes-agent-kb")
         
         # Analyze the query type to provide specialized guidance
-        query_lower = patient_query.lower()
-        consultation_type = "general"
+        consultation_type = get_consultation_type(patient_query, DIABETES_KEYWORDS)
         
-        if any(word in query_lower for word in ["symptom", "sign", "feel", "experience"]):
-            consultation_type = "symptoms"
-        elif any(word in query_lower for word in ["treatment", "medication", "medicine", "drug"]):
-            consultation_type = "treatment"
-        elif any(word in query_lower for word in ["diet", "food", "eat", "nutrition", "meal"]):
-            consultation_type = "nutrition"
-        elif any(word in query_lower for word in ["blood sugar", "glucose", "a1c", "monitor"]):
-            consultation_type = "monitoring"
-        elif any(word in query_lower for word in ["complication", "risk", "prevent"]):
-            consultation_type = "complications"
+        # Get the appropriate specialist guidance
+        specialist_guidance = DIABETES_CONSULTATION_FRAMEWORKS.get(
+            consultation_type, 
+            DIABETES_CONSULTATION_FRAMEWORKS["general"]
+        )
         
-        # Create specialized response based on consultation type
-        specialist_guidance = {
-            "symptoms": """
-🔍 SYMPTOM ANALYSIS FRAMEWORK:
-- Document frequency, severity, and timing
-- Consider blood glucose patterns
-- Assess for emergency signs (DKA, severe hypoglycemia)
-- Evaluate for complications (neuropathy, retinopathy, nephropathy)
-""",
-            "treatment": """
-💊 TREATMENT CONSIDERATIONS:
-- Current medications and dosing
-- A1C targets and individualization
-- Side effect profiles and contraindications
-- Lifestyle modifications as first-line therapy
-- Regular monitoring requirements
-""",
-            "nutrition": """
-🥗 NUTRITIONAL GUIDANCE:
-- Carbohydrate counting and glycemic index
-- Portion control and meal timing
-- Balanced macronutrient distribution
-- Special considerations for type 1 vs type 2
-- Integration with medication timing
-""",
-            "monitoring": """
-📊 MONITORING STRATEGIES:
-- Blood glucose testing frequency and timing
-- A1C targets (typically <7% for most adults)
-- Continuous glucose monitoring benefits
-- Ketone testing when indicated
-- Regular screening for complications
-""",
-            "complications": """
-⚠️ COMPLICATION PREVENTION:
-- Annual eye exams for retinopathy
-- Kidney function monitoring (eGFR, microalbumin)
-- Foot care and neuropathy screening
-- Cardiovascular risk assessment
-- Blood pressure and lipid management
-""",
-            "general": """
-🏥 COMPREHENSIVE DIABETES CARE:
-- Multidisciplinary team approach
-- Patient education and self-management
-- Regular follow-up scheduling
-- Emergency action plans
-- Quality of life considerations
-"""
-        }
+        # Format patient context
+        patient_context_section = format_patient_context(patient_context)
         
-        # Format the comprehensive response
-        response = f"""
-DIABETES SPECIALIST CONSULTATION
-================================
-
-Patient Query: {patient_query}
-{f"Patient Context: {patient_context}" if patient_context else ""}
-
-{specialist_guidance.get(consultation_type, specialist_guidance["general"])}
-
-EVIDENCE-BASED INFORMATION FROM KNOWLEDGE BASE:
-{kb_results}
-
-CLINICAL RECOMMENDATIONS:
-• Always consult with healthcare providers for personalized medical advice
-• Monitor blood glucose as recommended by your care team
-• Maintain regular follow-up appointments
-• Report any concerning symptoms promptly
-• Consider diabetes self-management education programs
-
-⚠️ IMPORTANT DISCLAIMER:
-This information is for educational purposes only and does not replace professional medical advice. 
-Always consult with qualified healthcare providers for diagnosis and treatment decisions.
-"""
+        # Format the comprehensive response using template
+        response = DIABETES_CONSULTATION_TEMPLATE.format(
+            patient_query=patient_query,
+            patient_context_section=patient_context_section,
+            specialist_guidance=specialist_guidance,
+            kb_results=kb_results,
+            clinical_recommendations=DIABETES_CLINICAL_RECOMMENDATIONS,
+            disclaimer=DIABETES_DISCLAIMER
+        )
         
         print(f"Generated specialized diabetes consultation response")
         return response
@@ -407,120 +362,27 @@ def amd_specialist_tool(patient_query: str, patient_context: str = ""):
         kb_results = _query_knowledge_base_internal(enhanced_query, "diabetes-agent-kb")
         
         # Analyze the query type to provide specialized guidance
-        query_lower = patient_query.lower()
-        consultation_type = "general"
+        consultation_type = get_consultation_type(patient_query, AMD_KEYWORDS)
         
-        if any(word in query_lower for word in ["symptom", "sign", "vision", "see", "sight", "blur"]):
-            consultation_type = "symptoms"
-        elif any(word in query_lower for word in ["treatment", "injection", "anti-vegf", "lucentis", "eylea", "avastin"]):
-            consultation_type = "treatment"
-        elif any(word in query_lower for word in ["diet", "supplement", "vitamin", "nutrition", "areds"]):
-            consultation_type = "nutrition"
-        elif any(word in query_lower for word in ["monitor", "test", "exam", "amsler", "oct"]):
-            consultation_type = "monitoring"
-        elif any(word in query_lower for word in ["prevent", "risk", "family history", "genetics"]):
-            consultation_type = "prevention"
-        elif any(word in query_lower for word in ["dry", "wet", "type", "stage", "advanced"]):
-            consultation_type = "classification"
+        # Get the appropriate specialist guidance
+        specialist_guidance = AMD_CONSULTATION_FRAMEWORKS.get(
+            consultation_type, 
+            AMD_CONSULTATION_FRAMEWORKS["general"]
+        )
         
-        # Create specialized response based on consultation type
-        specialist_guidance = {
-            "symptoms": """
-👁️ AMD SYMPTOM ASSESSMENT FRAMEWORK:
-- Central vision changes (straight lines appear wavy)
-- Dark or empty spots in central vision
-- Difficulty reading or recognizing faces
-- Need for brighter light when reading
-- Decreased intensity or brightness of colors
-- Amsler grid testing for metamorphopsia
-""",
-            "treatment": """
-💉 AMD TREATMENT OPTIONS:
-- Anti-VEGF injections for wet AMD (ranibizumab, aflibercept, bevacizumab)
-- Photodynamic therapy in select cases
-- Thermal laser photocoagulation (rarely used)
-- Low vision rehabilitation and aids
-- No proven treatment for dry AMD (except advanced cases)
-- Clinical trials for emerging therapies
-""",
-            "nutrition": """
-🥬 NUTRITIONAL INTERVENTIONS:
-- AREDS2 formula supplements (zinc, vitamins C & E, lutein, zeaxanthin)
-- Dark leafy greens (spinach, kale, collard greens)
-- Omega-3 fatty acids from fish
-- Avoid high-dose beta-carotene (especially smokers)
-- Mediterranean diet pattern
-- Limit processed foods and refined sugars
-""",
-            "monitoring": """
-📊 AMD MONITORING STRATEGIES:
-- Regular dilated eye exams (annually or as recommended)
-- Amsler grid testing at home (daily for high-risk patients)
-- Optical Coherence Tomography (OCT) imaging
-- Fluorescein angiography for wet AMD evaluation
-- Visual acuity testing
-- Immediate evaluation for sudden vision changes
-""",
-            "prevention": """
-⚠️ AMD RISK REDUCTION:
-- Smoking cessation (most important modifiable risk factor)
-- UV protection with quality sunglasses
-- Regular exercise and cardiovascular health
-- Blood pressure and cholesterol management
-- Healthy diet rich in antioxidants
-- Family history awareness and genetic counseling
-""",
-            "classification": """
-🔍 AMD CLASSIFICATION & STAGING:
-- Early AMD: Few medium drusen, no vision loss
-- Intermediate AMD: Many medium drusen or large drusen
-- Advanced dry AMD: Geographic atrophy in central retina
-- Advanced wet AMD: Choroidal neovascularization
-- Wet AMD requires urgent ophthalmologic evaluation
-- Dry AMD progression monitoring essential
-""",
-            "general": """
-👁️ COMPREHENSIVE AMD CARE:
-- Multidisciplinary approach with retinal specialists
-- Patient education on disease progression
-- Low vision rehabilitation services
-- Support groups and counseling
-- Adaptive technology and devices
-- Regular monitoring and early intervention
-"""
-        }
+        # Format patient context
+        patient_context_section = format_patient_context(patient_context)
         
-        # Format the comprehensive response
-        response = f"""
-AMD SPECIALIST CONSULTATION
-===========================
-
-Patient Query: {patient_query}
-{f"Patient Context: {patient_context}" if patient_context else ""}
-
-{specialist_guidance.get(consultation_type, specialist_guidance["general"])}
-
-EVIDENCE-BASED INFORMATION FROM KNOWLEDGE BASE:
-{kb_results}
-
-CLINICAL RECOMMENDATIONS:
-• Immediate ophthalmologic evaluation for sudden vision changes
-• Regular monitoring with Amsler grid testing
-• AREDS2 supplements for intermediate AMD or advanced AMD in one eye
-• Smoking cessation counseling if applicable
-• UV protection and cardiovascular risk management
-• Low vision rehabilitation referral when appropriate
-
-⚠️ URGENT REFERRAL INDICATORS:
-- Sudden onset of visual distortion or central vision loss
-- New onset of metamorphopsia (wavy lines)
-- Rapid progression of symptoms
-- Suspected conversion from dry to wet AMD
-
-⚠️ IMPORTANT DISCLAIMER:
-This information is for educational purposes only and does not replace professional medical advice. 
-AMD requires specialized ophthalmologic care. Always consult with qualified eye care professionals for diagnosis and treatment decisions.
-"""
+        # Format the comprehensive response using template
+        response = AMD_CONSULTATION_TEMPLATE.format(
+            patient_query=patient_query,
+            patient_context_section=patient_context_section,
+            specialist_guidance=specialist_guidance,
+            kb_results=kb_results,
+            clinical_recommendations=AMD_CLINICAL_RECOMMENDATIONS,
+            urgent_referral_indicators=AMD_URGENT_REFERRAL_INDICATORS,
+            disclaimer=AMD_DISCLAIMER
+        )
         
         print(f"Generated specialized AMD consultation response")
         return response
@@ -547,7 +409,12 @@ def web_search(query):
 
     # Check if web search tool is available
     if web_search_tool is None:
-        error_msg = "Web search is not available. TAVILY_API_KEY not configured in environment variables."
+        if not TAVILY_AVAILABLE:
+            error_msg = "Web search is not available. langchain_tavily package is not installed."
+        elif not TAVILY_API_KEY:
+            error_msg = "Web search is not available. TAVILY_API_KEY not configured in environment variables."
+        else:
+            error_msg = "Web search is not available. Tavily search tool initialization failed."
         print(f"❌ {error_msg}")
         return error_msg
 
