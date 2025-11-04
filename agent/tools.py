@@ -7,6 +7,21 @@ import json
 import os
 import asyncio, re
 from strands import Agent, tool
+from prompts import (
+    DIABETES_CONSULTATION_FRAMEWORKS, 
+    DIABETES_CLINICAL_RECOMMENDATIONS,
+    DIABETES_DISCLAIMER,
+    DIABETES_CONSULTATION_TEMPLATE,
+    DIABETES_KEYWORDS,
+    AMD_CONSULTATION_FRAMEWORKS,
+    AMD_CLINICAL_RECOMMENDATIONS,
+    AMD_URGENT_REFERRAL_INDICATORS,
+    AMD_DISCLAIMER,
+    AMD_CONSULTATION_TEMPLATE,
+    AMD_KEYWORDS,
+    get_consultation_type,
+    format_patient_context
+)
 # Try different import locations for Document class (LangChain versions vary)
 try:
     from langchain_core.documents import Document
@@ -25,7 +40,14 @@ except ImportError:
 # from ragas.metrics import LLMContextPrecisionWithoutReference
 # from ragas.llms import LangchainLLMWrapper
 # from ragas.embeddings import LangchainEmbeddingsWrapper
-from langchain_tavily import TavilySearch
+# Try to import TavilySearch, make it optional for local testing
+try:
+    from langchain_tavily import TavilySearch
+    TAVILY_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: langchain_tavily not available. Web search will be disabled.")
+    TavilySearch = None
+    TAVILY_AVAILABLE = False
 
 # RAGAS evaluation setup (commented out)
 # eval_modelId = 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
@@ -52,93 +74,23 @@ except ImportError:
 # Get TAVILY_API_KEY from environment
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
 
-# Initialize Tavily search tool with the modern API (only if API key is available)
+# Initialize Tavily search tool with the modern API (only if available and API key is set)
 web_search_tool = None
-if TAVILY_API_KEY:
+if TAVILY_AVAILABLE and TAVILY_API_KEY:
     try:
         web_search_tool = TavilySearch(api_key=TAVILY_API_KEY, max_results=3)
         print("✅ Tavily search tool initialized")
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize Tavily search tool: {e}")
         web_search_tool = None
-else:
+elif not TAVILY_AVAILABLE:
+    print("⚠️ Warning: langchain_tavily not installed. Web search will not be available.")
+elif not TAVILY_API_KEY:
     print("⚠️ Warning: TAVILY_API_KEY not found. Web search will not be available.")
 
-# @tool
-# def check_chunks_relevance(results: str, question: str):
-#     """
-#     Evaluates the relevance of retrieved chunks to the user question using RAGAs.
-#     COMMENTED OUT: This tool uses asyncio and RAGAS which can cause Lambda deployment issues.
-#     
-#     Args:
-#         results (str): Retrieval output as a string with 'Score:' and 'Content:' patterns.
-#         question (str): Original user question.
-# 
-#     Returns:
-#         dict: A binary score ('yes' or 'no') and the numeric relevance score, or an error message.
-#     """
-#     try:
-#         if not results or not isinstance(results, str):
-#             raise ValueError("Invalid input: 'results' must be a non-empty string.")
-#         if not question or not isinstance(question, str):
-#             raise ValueError("Invalid input: 'question' must be a non-empty string.")
-# 
-#         # Extract content chunks using regex
-#         pattern = r"Score:.*?\nContent:\s*(.*?)(?=Score:|\Z)"
-#         docs = [chunk.strip() for chunk in re.findall(pattern, results, re.DOTALL)]
-# 
-#         if not docs:
-#             raise ValueError("No valid content chunks found in 'results'.")
-# 
-#         # Prepare evaluation sample
-#         sample = SingleTurnSample(
-#             user_input=question,
-#             response="placeholder-response",  # required dummy response
-#             retrieved_contexts=docs
-#         )
-# 
-#         # Evaluate using context precision metric
-#         scorer = LLMContextPrecisionWithoutReference(llm=llm_for_evaluation)
-#         
-#         # Handle asyncio in Lambda environment
-#         try:
-#             # Try to get existing event loop
-#             loop = asyncio.get_event_loop()
-#             if loop.is_running():
-#                 # If loop is already running (like in Lambda), create a task
-#                 import concurrent.futures
-#                 with concurrent.futures.ThreadPoolExecutor() as executor:
-#                     future = executor.submit(asyncio.run, scorer.single_turn_ascore(sample))
-#                     score = future.result()
-#             else:
-#                 score = asyncio.run(scorer.single_turn_ascore(sample))
-#         except RuntimeError:
-#             # Fallback for Lambda environment
-#             score = asyncio.run(scorer.single_turn_ascore(sample))
-# 
-#         print("------------------------")
-#         print("Context evaluation")
-#         print("------------------------")
-#         print(f"chunk_relevance_score: {score}")
-# 
-#         return {
-#             "chunk_relevance_score": "yes" if score > 0.5 else "no",
-#             "chunk_relevance_value": score
-#         }
-# 
-#     except Exception as e:
-#         return {
-#             "error": str(e),
-#             "chunk_relevance_score": "unknown",
-#             "chunk_relevance_value": None
-#         }
-
-
-
-@tool
-def query_knowledge_base(query: str, kb_name: str = "diabetes-agent-kb"):
+def _query_knowledge_base_internal(query: str, kb_name: str = "diabetes-agent-kb"):
     """
-    Query the medical knowledge base for diabetes-related information.
+    Internal helper function to query the medical knowledge base.
     
     Args:
         query (str): The medical question to search for
@@ -241,6 +193,205 @@ def query_knowledge_base(query: str, kb_name: str = "diabetes-agent-kb"):
         print(error_msg)
         return error_msg
 
+# @tool
+# def check_chunks_relevance(results: str, question: str):
+#     """
+#     Evaluates the relevance of retrieved chunks to the user question using RAGAs.
+#     COMMENTED OUT: This tool uses asyncio and RAGAS which can cause Lambda deployment issues.
+#     
+#     Args:
+#         results (str): Retrieval output as a string with 'Score:' and 'Content:' patterns.
+#         question (str): Original user question.
+# 
+#     Returns:
+#         dict: A binary score ('yes' or 'no') and the numeric relevance score, or an error message.
+#     """
+#     try:
+#         if not results or not isinstance(results, str):
+#             raise ValueError("Invalid input: 'results' must be a non-empty string.")
+#         if not question or not isinstance(question, str):
+#             raise ValueError("Invalid input: 'question' must be a non-empty string.")
+# 
+#         # Extract content chunks using regex
+#         pattern = r"Score:.*?\nContent:\s*(.*?)(?=Score:|\Z)"
+#         docs = [chunk.strip() for chunk in re.findall(pattern, results, re.DOTALL)]
+# 
+#         if not docs:
+#             raise ValueError("No valid content chunks found in 'results'.")
+# 
+#         # Prepare evaluation sample
+#         sample = SingleTurnSample(
+#             user_input=question,
+#             response="placeholder-response",  # required dummy response
+#             retrieved_contexts=docs
+#         )
+# 
+#         # Evaluate using context precision metric
+#         scorer = LLMContextPrecisionWithoutReference(llm=llm_for_evaluation)
+#         
+#         # Handle asyncio in Lambda environment
+#         try:
+#             # Try to get existing event loop
+#             loop = asyncio.get_event_loop()
+#             if loop.is_running():
+#                 # If loop is already running (like in Lambda), create a task
+#                 import concurrent.futures
+#                 with concurrent.futures.ThreadPoolExecutor() as executor:
+#                     future = executor.submit(asyncio.run, scorer.single_turn_ascore(sample))
+#                     score = future.result()
+#             else:
+#                 score = asyncio.run(scorer.single_turn_ascore(sample))
+#         except RuntimeError:
+#             # Fallback for Lambda environment
+#             score = asyncio.run(scorer.single_turn_ascore(sample))
+# 
+#         print("------------------------")
+#         print("Context evaluation")
+#         print("------------------------")
+#         print(f"chunk_relevance_score: {score}")
+# 
+#         return {
+#             "chunk_relevance_score": "yes" if score > 0.5 else "no",
+#             "chunk_relevance_value": score
+#         }
+# 
+#     except Exception as e:
+#         return {
+#             "error": str(e),
+#             "chunk_relevance_score": "unknown",
+#             "chunk_relevance_value": None
+#         }
+
+
+
+
+
+@tool
+def diabetes_specialist_tool(patient_query: str, patient_context: str = ""):
+    """
+    Specialized diabetes consultation tool that provides comprehensive diabetes-related guidance.
+    
+    This tool combines knowledge base search with specialized diabetes expertise to provide:
+    - Symptom analysis and risk assessment
+    - Treatment options and medication guidance
+    - Lifestyle and dietary recommendations
+    - Blood sugar management strategies
+    - Complication prevention advice
+    
+    Args:
+        patient_query (str): The patient's question or concern about diabetes
+        patient_context (str): Optional context about the patient (age, type of diabetes, current medications, etc.)
+    
+    Returns:
+        str: Comprehensive diabetes consultation response with evidence-based recommendations
+    """
+    try:
+        print(f"---DIABETES SPECIALIST CONSULTATION---")
+        print(f"Patient Query: {patient_query}")
+        print(f"Patient Context: {patient_context}")
+        
+        # Enhanced query for knowledge base search
+        enhanced_query = f"diabetes {patient_query}"
+        if patient_context:
+            enhanced_query += f" {patient_context}"
+        
+        # Query the knowledge base first
+        kb_results = _query_knowledge_base_internal(enhanced_query, "diabetes-agent-kb")
+        
+        # Analyze the query type to provide specialized guidance
+        consultation_type = get_consultation_type(patient_query, DIABETES_KEYWORDS)
+        
+        # Get the appropriate specialist guidance
+        specialist_guidance = DIABETES_CONSULTATION_FRAMEWORKS.get(
+            consultation_type, 
+            DIABETES_CONSULTATION_FRAMEWORKS["general"]
+        )
+        
+        # Format patient context
+        patient_context_section = format_patient_context(patient_context)
+        
+        # Format the comprehensive response using template
+        response = DIABETES_CONSULTATION_TEMPLATE.format(
+            patient_query=patient_query,
+            patient_context_section=patient_context_section,
+            specialist_guidance=specialist_guidance,
+            kb_results=kb_results,
+            clinical_recommendations=DIABETES_CLINICAL_RECOMMENDATIONS,
+            disclaimer=DIABETES_DISCLAIMER
+        )
+        
+        print(f"Generated specialized diabetes consultation response")
+        return response
+        
+    except Exception as e:
+        error_msg = f"Error in diabetes specialist consultation: {str(e)}"
+        print(error_msg)
+        return error_msg
+
+@tool
+def amd_specialist_tool(patient_query: str, patient_context: str = ""):
+    """
+    Specialized Age-related Macular Degeneration (AMD) consultation tool that provides comprehensive AMD-related guidance.
+    
+    This tool combines knowledge base search with specialized AMD expertise to provide:
+    - Early detection and risk assessment
+    - Dry vs wet AMD differentiation
+    - Treatment options and management strategies
+    - Vision preservation techniques
+    - Lifestyle modifications and supplements
+    - Monitoring and follow-up recommendations
+    
+    Args:
+        patient_query (str): The patient's question or concern about AMD or vision problems
+        patient_context (str): Optional context about the patient (age, family history, current vision status, etc.)
+    
+    Returns:
+        str: Comprehensive AMD consultation response with evidence-based recommendations
+    """
+    try:
+        print(f"---AMD SPECIALIST CONSULTATION---")
+        print(f"Patient Query: {patient_query}")
+        print(f"Patient Context: {patient_context}")
+        
+        # Enhanced query for knowledge base search
+        enhanced_query = f"age-related macular degeneration AMD {patient_query}"
+        if patient_context:
+            enhanced_query += f" {patient_context}"
+        
+        # Query the knowledge base first
+        kb_results = _query_knowledge_base_internal(enhanced_query, "diabetes-agent-kb")
+        
+        # Analyze the query type to provide specialized guidance
+        consultation_type = get_consultation_type(patient_query, AMD_KEYWORDS)
+        
+        # Get the appropriate specialist guidance
+        specialist_guidance = AMD_CONSULTATION_FRAMEWORKS.get(
+            consultation_type, 
+            AMD_CONSULTATION_FRAMEWORKS["general"]
+        )
+        
+        # Format patient context
+        patient_context_section = format_patient_context(patient_context)
+        
+        # Format the comprehensive response using template
+        response = AMD_CONSULTATION_TEMPLATE.format(
+            patient_query=patient_query,
+            patient_context_section=patient_context_section,
+            specialist_guidance=specialist_guidance,
+            kb_results=kb_results,
+            clinical_recommendations=AMD_CLINICAL_RECOMMENDATIONS,
+            urgent_referral_indicators=AMD_URGENT_REFERRAL_INDICATORS,
+            disclaimer=AMD_DISCLAIMER
+        )
+        
+        print(f"Generated specialized AMD consultation response")
+        return response
+        
+    except Exception as e:
+        error_msg = f"Error in AMD specialist consultation: {str(e)}"
+        print(error_msg)
+        return error_msg
+
 @tool
 def web_search(query):
     """
@@ -258,7 +409,12 @@ def web_search(query):
 
     # Check if web search tool is available
     if web_search_tool is None:
-        error_msg = "Web search is not available. TAVILY_API_KEY not configured in environment variables."
+        if not TAVILY_AVAILABLE:
+            error_msg = "Web search is not available. langchain_tavily package is not installed."
+        elif not TAVILY_API_KEY:
+            error_msg = "Web search is not available. TAVILY_API_KEY not configured in environment variables."
+        else:
+            error_msg = "Web search is not available. Tavily search tool initialization failed."
         print(f"❌ {error_msg}")
         return error_msg
 
