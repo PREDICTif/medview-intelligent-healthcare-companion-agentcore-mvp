@@ -1,0 +1,30 @@
+default_agent: strands_agent
+agents:
+  strands_agent:
+    name: strands_agent
+    entrypoint: agent/strands_agent.py
+    platform: linux/arm64
+    container_runtime: none
+    aws:
+      execution_role: arn:aws:iam::584360833890:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-6a6a8eb7be
+      execution_role_auto_create: false
+      account: '584360833890'
+      region: us-east-1
+      ecr_repository: 584360833890.dkr.ecr.us-east-1.amazonaws.com/bedrock-agentcore-strands_agent
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: null
+      agent_arn: null
+      agent_session_id: null
+    codebuild:
+      project_name: null
+      execution_role: null
+      source_bucket: null
+    authorizer_configuration: null
+    oauth_configuration: null
