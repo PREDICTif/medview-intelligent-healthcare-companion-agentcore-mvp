@@ -31,7 +31,7 @@ def create_gateway(gateway_name: str, api_spec: List) -> dict:
             "mcp": {
                 "lambda": {
                     "lambdaArn": get_ssm_parameter(
-                        "/app/customersupport/agentcore/lambda_arn"
+                        "/app/medicalassistant/agentcore/lambda_arn"
                     ),
                     "toolSchema": {"inlinePayload": api_spec},
                 }
@@ -42,17 +42,17 @@ def create_gateway(gateway_name: str, api_spec: List) -> dict:
             "customJWTAuthorizer": {
                 "allowedClients": [
                     get_ssm_parameter(
-                        "/app/customersupport/agentcore/machine_client_id"
+                        "/app/medicalassistant/agentcore/machine_client_id"
                     )
                 ],
                 "discoveryUrl": get_ssm_parameter(
-                    "/app/customersupport/agentcore/cognito_discovery_url"
+                    "/app/medicalassistant/agentcore/cognito_discovery_url"
                 ),
             }
         }
 
         execution_role_arn = get_ssm_parameter(
-            "/app/customersupport/agentcore/gateway_iam_role"
+            "/app/medicalassistant/agentcore/gateway_iam_role"
         )
 
         click.echo(f"Creating gateway in region {REGION} with name: {gateway_name}")
@@ -64,7 +64,7 @@ def create_gateway(gateway_name: str, api_spec: List) -> dict:
             protocolType="MCP",
             authorizerType="CUSTOM_JWT",
             authorizerConfiguration=auth_config,
-            description="Customer Support AgentCore Gateway",
+            description="Medical Assistant AgentCore Gateway for Patient Database Access",
         )
 
         click.echo(f"✅ Gateway created: {create_response['gatewayId']}")
@@ -91,16 +91,16 @@ def create_gateway(gateway_name: str, api_spec: List) -> dict:
         }
 
         # Save gateway details to SSM parameters
-        put_ssm_parameter("/app/customersupport/agentcore/gateway_id", gateway_id)
-        put_ssm_parameter("/app/customersupport/agentcore/gateway_name", gateway_name)
+        put_ssm_parameter("/app/medicalassistant/agentcore/gateway_id", gateway_id)
+        put_ssm_parameter("/app/medicalassistant/agentcore/gateway_name", gateway_name)
         put_ssm_parameter(
-            "/app/customersupport/agentcore/gateway_arn", create_response["gatewayArn"]
+            "/app/medicalassistant/agentcore/gateway_arn", create_response["gatewayArn"]
         )
         put_ssm_parameter(
-            "/app/customersupport/agentcore/gateway_url", create_response["gatewayUrl"]
+            "/app/medicalassistant/agentcore/gateway_url", create_response["gatewayUrl"]
         )
         put_ssm_parameter(
-            "/app/customersupport/agentcore/cognito_secret",
+            "/app/medicalassistant/agentcore/cognito_secret",
             get_cognito_client_secret(),
             with_encryption=True,
         )
@@ -147,7 +147,7 @@ def delete_gateway(gateway_id: str) -> bool:
 def get_gateway_id_from_config() -> str:
     """Get gateway ID from SSM parameter."""
     try:
-        return get_ssm_parameter("/app/customersupport/agentcore/gateway_id")
+        return get_ssm_parameter("/app/medicalassistant/agentcore/gateway_id")
     except Exception as e:
         click.echo(f"❌ Error reading gateway ID from SSM: {str(e)}", err=True)
         return None
@@ -167,8 +167,8 @@ def cli(ctx):
 @click.option("--name", required=True, help="Name for the gateway")
 @click.option(
     "--api-spec-file",
-    default="prerequisite/lambda/api_spec.json",
-    help="Path to the API specification file (default: prerequisite/lambda/api_spec.json)",
+    default="lambda/database-handler/api_spec.json",
+    help="Path to the API specification file (default: lambda/database-handler/api_spec.json)",
 )
 def create(name, api_spec_file):
     """Create a new AgentCore gateway."""
@@ -224,11 +224,11 @@ def delete(gateway_id, confirm):
         click.echo("✅ Gateway deleted successfully")
 
         # Clean up SSM parameters
-        delete_ssm_parameter("/app/customersupport/agentcore/gateway_id")
-        delete_ssm_parameter("/app/customersupport/agentcore/gateway_name")
-        delete_ssm_parameter("/app/customersupport/agentcore/gateway_arn")
-        delete_ssm_parameter("/app/customersupport/agentcore/gateway_url")
-        delete_ssm_parameter("/app/customersupport/agentcore/cognito_secret")
+        delete_ssm_parameter("/app/medicalassistant/agentcore/gateway_id")
+        delete_ssm_parameter("/app/medicalassistant/agentcore/gateway_name")
+        delete_ssm_parameter("/app/medicalassistant/agentcore/gateway_arn")
+        delete_ssm_parameter("/app/medicalassistant/agentcore/gateway_url")
+        delete_ssm_parameter("/app/medicalassistant/agentcore/cognito_secret")
         click.echo("🧹 Removed gateway SSM parameters")
 
         # Clean up config file if it exists (backward compatibility)

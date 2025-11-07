@@ -21,7 +21,7 @@ agents:
     bedrock_agentcore:
       agent_id: null
       agent_arn: null
-      agent_session_id: null
+      agent_session_id: test123
     codebuild:
       project_name: null
       execution_role: null
