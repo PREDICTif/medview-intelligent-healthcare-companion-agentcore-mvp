@@ -21,9 +21,9 @@ def get_ssm_parameter(parameter_name: str) -> Optional[str]:
     except Exception:
         return None
 
-def get_lambda_url() -> Optional[str]:
-    """Get the Lambda Function URL from SSM"""
-    return get_ssm_parameter("/app/medicalassistant/agentcore/lambda_url")
+def get_gateway_url() -> Optional[str]:
+    """Get the AgentCore Gateway URL from SSM"""
+    return get_ssm_parameter("/app/medicalassistant/agentcore/gateway_url")
 
 def format_patient_summary(patient: Dict[str, Any]) -> str:
     """Format patient data for display in agent responses"""
@@ -59,12 +59,12 @@ def lookup_patient_record(patient_identifier: str) -> str:
         Formatted patient information including medical history, medications, and care details
     """
     try:
-        lambda_url = get_lambda_url()
-        if not lambda_url:
-            return "❌ Patient database is not available. Lambda function not configured."
+        gateway_url = get_gateway_url()
+        if not gateway_url:
+            return "❌ Patient database is not available. Gateway not configured."
         
-        # Clean the Lambda URL and make action-based request
-        base_url = lambda_url.rstrip('/')
+        # Clean the gateway URL and make action-based request
+        base_url = gateway_url.rstrip('/')
         
         # Use action-based approach for Lambda function
         payload = {
@@ -107,12 +107,12 @@ def get_diabetes_patients_list() -> str:
         Summary of patients with diabetes including their diabetes type and key information
     """
     try:
-        lambda_url = get_lambda_url()
-        if not lambda_url:
-            return "❌ Patient database is not available. Lambda function not configured."
+        gateway_url = get_gateway_url()
+        if not gateway_url:
+            return "❌ Patient database is not available. Gateway not configured."
         
         # Get all patients using action-based approach
-        base_url = lambda_url.rstrip('/')
+        base_url = gateway_url.rstrip('/')
         
         payload = {
             "action": "get_patients"
@@ -173,12 +173,12 @@ def search_patients_by_name(first_name: str = "", last_name: str = "") -> str:
         if not first_name and not last_name:
             return "❌ Please provide at least a first name or last name to search for."
         
-        lambda_url = get_lambda_url()
-        if not lambda_url:
-            return "❌ Patient database is not available. Lambda function not configured."
+        gateway_url = get_gateway_url()
+        if not gateway_url:
+            return "❌ Patient database is not available. Gateway not configured."
         
         # Get all patients first, then filter by name
-        base_url = lambda_url.rstrip('/')
+        base_url = gateway_url.rstrip('/')
         
         payload = {
             "action": "get_patients"
@@ -260,12 +260,12 @@ def get_patient_medication_list(patient_identifier: str) -> str:
         Patient's current medications and allergy information
     """
     try:
-        lambda_url = get_lambda_url()
-        if not lambda_url:
-            return "❌ Patient database is not available. Lambda function not configured."
+        gateway_url = get_gateway_url()
+        if not gateway_url:
+            return "❌ Patient database is not available. Gateway not configured."
         
-        # Clean the Lambda URL and make action-based request
-        base_url = lambda_url.rstrip('/')
+        # Clean the gateway URL and make action-based request
+        base_url = gateway_url.rstrip('/')
         
         payload = {
             "action": "get_patient_by_id",

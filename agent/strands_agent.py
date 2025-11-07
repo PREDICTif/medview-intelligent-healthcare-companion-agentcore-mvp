@@ -67,53 +67,21 @@ def get_memory_id():
         return None
 
 def extract_user_id_from_context(context) -> str:
-    """
-    Extract Cognito user ID from AgentCore context
-    
-    Priority order:
-    1. context.identity.sub (Cognito user ID from JWT token)
-    2. context.identity.user_id (alternative user ID field)
-    3. context.user_id (direct user ID)
-    4. Fallback to session-based ID
-    """
-    print(f"🔍 Extracting user ID from context: {type(context)}")
-    
-    # Try to get Cognito sub (user ID) from identity
-    if hasattr(context, 'identity') and context.identity:
-        print(f"   Found identity object: {type(context.identity)}")
-        
-        # Cognito sub is the primary user identifier
-        if hasattr(context.identity, 'sub') and context.identity.sub:
-            cognito_user_id = context.identity.sub
-            print(f"✅ Using Cognito user ID (sub): {cognito_user_id}")
-            return cognito_user_id
-        
-        # Alternative user_id field
-        if hasattr(context.identity, 'user_id') and context.identity.user_id:
-            user_id = context.identity.user_id
-            print(f"✅ Using identity user_id: {user_id}")
-            return user_id
-        
-        # Check for username as fallback
-        if hasattr(context.identity, 'username') and context.identity.username:
-            username = context.identity.username
-            print(f"✅ Using identity username: {username}")
-            return username
-    
-    # Direct user_id on context
+    """Extract user ID from AgentCore context"""
+    # Try different ways to get user ID
     if hasattr(context, 'user_id') and context.user_id:
-        user_id = context.user_id
-        print(f"✅ Using context user_id: {user_id}")
-        return user_id
+        return context.user_id
+    elif hasattr(context, 'identity') and context.identity:
+        # Extract from identity context if available
+        if hasattr(context.identity, 'user_id'):
+            return context.identity.user_id
+        elif hasattr(context.identity, 'sub'):
+            return context.identity.sub
     
-    # Fallback to session_id
+    # Fallback to session_id or default
     if hasattr(context, 'session_id') and context.session_id:
-        session_based_id = f"user_{context.session_id}"
-        print(f"⚠️ Using session-based ID: {session_based_id}")
-        return session_based_id
+        return f"user_{context.session_id}"
     
-    # Last resort default
-    print("⚠️ Using default user ID")
     return "default_user"
 
 def get_session_id_from_context(context) -> str:
