@@ -46,12 +46,6 @@ export class AuthStack extends cdk.Stack {
             },
             generateSecret: false, // Public client (frontend)
             preventUserExistenceErrors: true,
-            // Token validity settings
-            accessTokenValidity: cdk.Duration.hours(1), // 1 hour access token
-            idTokenValidity: cdk.Duration.hours(1), // 1 hour ID token  
-            refreshTokenValidity: cdk.Duration.days(30), // 30 day refresh token
-            // Enable token refresh
-            authSessionValidity: cdk.Duration.minutes(3), // 3 minutes for auth flow
         });
 
         // Outputs

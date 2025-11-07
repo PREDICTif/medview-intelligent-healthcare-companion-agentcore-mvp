@@ -10,7 +10,6 @@ langchain-community>=0.0.10
 langchain-tavily
 # Optional dependencies
 python-dotenv
-uv
-bedrock-agentcore-starter-toolkit
-pydantic
-aws-opentelemetry-distro~=0.12.1
+# Commented out heavy dependencies that can cause Lambda issues
+# ragas
+# opensearch-py

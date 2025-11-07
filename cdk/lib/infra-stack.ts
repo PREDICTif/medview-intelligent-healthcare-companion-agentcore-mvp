@@ -141,32 +141,6 @@ export class AgentCoreInfraStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // AgentCore Memory permissions
-    agentRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'AgentCoreMemoryAccess',
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'bedrock-agentcore:GetMemory',
-        'bedrock-agentcore:ListMemories',
-        'bedrock-agentcore:SaveConversation',
-        'bedrock-agentcore:RetrieveMemories',
-        'bedrock-agentcore:RetrieveMemoryRecords',
-        'bedrock-agentcore:GetLastKTurns',
-        'bedrock-agentcore:ListEvents',
-        'bedrock-agentcore:CreateEvent',
-        'bedrock-agentcore:GetEvent',
-        'bedrock-agentcore:UpdateEvent',
-        'bedrock-agentcore:DeleteEvent',
-        'bedrock-agentcore:CreateMemoryRecord',
-        'bedrock-agentcore:GetMemoryRecord',
-        'bedrock-agentcore:UpdateMemoryRecord',
-        'bedrock-agentcore:DeleteMemoryRecord',
-      ],
-      resources: [
-        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:memory/*`,
-      ],
-    }));
-
     // Bedrock Agent Runtime permissions for Knowledge Base access
     agentRole.addToPolicy(new iam.PolicyStatement({
       sid: 'BedrockAgentRuntimeAccess',
@@ -183,7 +157,7 @@ export class AgentCoreInfraStack extends cdk.Stack {
       ],
     }));
 
-    // SSM Parameter Store access for Knowledge Base IDs and Memory configuration
+    // SSM Parameter Store access for Knowledge Base IDs
     agentRole.addToPolicy(new iam.PolicyStatement({
       sid: 'SSMParameterAccess',
       effect: iam.Effect.ALLOW,
@@ -194,7 +168,6 @@ export class AgentCoreInfraStack extends cdk.Stack {
       ],
       resources: [
         `arn:aws:ssm:${this.region}:${this.account}:parameter/bedrock/knowledge-base/*`,
-        `arn:aws:ssm:${this.region}:${this.account}:parameter/app/medicalassistant/agentcore/*`,
       ],
     }));
 
