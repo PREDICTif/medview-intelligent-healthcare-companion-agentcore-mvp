@@ -1,260 +1,301 @@
 import asyncio
 import os
 import json
+import boto3
 from strands import Agent, tool
 from typing import Generator, Union, Any
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+# from bedrock_agentcore.context import RequestContext  # May not be available in all environments
 from strands.models import BedrockModel
-from tools import web_search, diabetes_specialist_tool, amd_specialist_tool  # Import custom tools
-from prompts import AGENT_SYSTEM_PROMPT  # Import centralized prompts
-from memory_integration import memory_manager  # Import memory manager
-# from tools import check_chunks_relevance  # Commented out - can cause Lambda issues
+from tools import web_search, diabetes_specialist_tool, amd_specialist_tool
+from prompts import AGENT_SYSTEM_PROMPT
+from patient_tools import lookup_patient_record, get_diabetes_patients_list, search_patients_by_name, get_patient_medication_list
 
-# Set environment variable to bypass tool consent (as shown in AgentCore examples)
+# Import memory components
+from bedrock_agentcore.memory import MemoryClient
+from memory_hook_provider import MemoryHook
+from strands.hooks import HookRegistry
+
+# Set environment variable to bypass tool consent
 os.environ["BYPASS_TOOL_CONSENT"] = "true"
 
 # Create the AgentCore app
 app = BedrockAgentCoreApp()
 
-model_id = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-model = BedrockModel(
-    model_id=model_id,
-    # Configure model parameters for consistent medical information
-    max_tokens=4096,
-    temperature=0.1,  # Lower temperature for more consistent medical information
-    # top_p=0.9,  # Cannot use both temperature and top_p with this model
-)
+# Initialize AWS clients with error handling
+try:
+    ssm = boto3.client("ssm")
+    print("✅ SSM client initialized")
+except Exception as e:
+    print(f"⚠️ SSM client initialization failed: {e}")
+    ssm = None
 
-agent = Agent(
-    model=model,
-    tools=[diabetes_specialist_tool, amd_specialist_tool, web_search],
-    # tools=[query_knowledge_base, check_chunks_relevance, web_search, check_aws_region],  # Full version with relevance check
-    system_prompt=AGENT_SYSTEM_PROMPT
-)
+try:
+    memory_client = MemoryClient()
+    print("✅ Memory client initialized")
+except Exception as e:
+    print(f"⚠️ Memory client initialization failed: {e}")
+    memory_client = None
+
+def get_memory_id():
+    """Get memory ID from environment variable or SSM parameter"""
+    # First try environment variable (for AgentCore deployment)
+    memory_id = os.environ.get("AGENTCORE_MEMORY_ID")
+    if memory_id:
+        print(f"✅ Retrieved memory_id from environment: {memory_id}")
+        return memory_id
+    
+    # Fallback to SSM parameter (for local testing)
+    if not ssm:
+        print("⚠️ SSM client not available and no AGENTCORE_MEMORY_ID env var - running without memory")
+        return None
+        
+    try:
+        response = ssm.get_parameter(Name="/app/medicalassistant/agentcore/memory_id")
+        memory_id = response["Parameter"]["Value"]
+        print(f"✅ Retrieved memory_id from SSM: {memory_id}")
+        return memory_id
+    except Exception as e:
+        # Handle all SSM exceptions gracefully
+        error_type = type(e).__name__
+        if "ParameterNotFound" in error_type:
+            print("⚠️ Memory parameter not found in SSM - running without memory")
+        elif "AccessDenied" in error_type:
+            print("⚠️ Access denied to SSM parameter - check IAM permissions")
+        else:
+            print(f"⚠️ SSM error (running without memory): {error_type}: {e}")
+        return None
+
+def extract_user_id_from_context(context) -> str:
+    """Extract user ID from AgentCore context"""
+    # Try different ways to get user ID
+    if hasattr(context, 'user_id') and context.user_id:
+        return context.user_id
+    elif hasattr(context, 'identity') and context.identity:
+        # Extract from identity context if available
+        if hasattr(context.identity, 'user_id'):
+            return context.identity.user_id
+        elif hasattr(context.identity, 'sub'):
+            return context.identity.sub
+    
+    # Fallback to session_id or default
+    if hasattr(context, 'session_id') and context.session_id:
+        return f"user_{context.session_id}"
+    
+    return "default_user"
+
+def get_session_id_from_context(context) -> str:
+    """Extract session ID from AgentCore context"""
+    if hasattr(context, 'session_id') and context.session_id:
+        return context.session_id
+    return "default_session"
+
+def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> Agent:
+    """Create agent with memory hook configured"""
+    model_id = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    model = BedrockModel(
+        model_id=model_id,
+        max_tokens=4096,
+        temperature=0.1,
+    )
+    
+    # Create agent with patient database tools
+    agent = Agent(
+        model=model,
+        tools=[
+            diabetes_specialist_tool, 
+            amd_specialist_tool, 
+            web_search,
+            lookup_patient_record,           # Patient database lookup
+            get_diabetes_patients_list,      # List diabetes patients  
+            search_patients_by_name,         # Search patients by name
+            get_patient_medication_list      # Get patient medications
+        ],
+        system_prompt=AGENT_SYSTEM_PROMPT
+    )
+    
+    # Add memory hook if memory_id and memory_client are available
+    if memory_id and memory_client:
+        try:
+            print(f"🧠 Configuring memory: memory_id={memory_id}, actor_id={actor_id}, session_id={session_id}")
+            memory_hook = MemoryHook(
+                memory_client=memory_client,
+                memory_id=memory_id,
+                actor_id=actor_id,
+                session_id=session_id
+            )
+            
+            # Register memory hooks
+            hook_registry = HookRegistry()
+            memory_hook.register_hooks(hook_registry)
+            agent.hook_registry = hook_registry
+            
+            print("✅ Memory hooks registered successfully")
+        except Exception as e:
+            print(f"⚠️ Memory hook registration failed: {e}")
+            print("🔄 Continuing without memory...")
+    else:
+        if not memory_id:
+            print("⚠️ No memory_id available, running without memory")
+        if not memory_client:
+            print("⚠️ Memory client not available, running without memory")
+    
+    return agent
 
 @app.entrypoint
 async def strands_agent_bedrock(payload, context):
     """
-    Async handler for agent invocation with streaming support
+    Medical Assistant Agent with Patient Database Integration
     
-    IMPORTANT: Payload structure varies depending on invocation method:
-    - Direct invocation (Python SDK, Console, agentcore CLI): {"prompt": "..."}
-    - AWS SDK invocation (JS/Java/etc via InvokeAgentRuntimeCommand): {"input": {"prompt": "..."}}
-    
-    The AWS SDK automatically wraps payloads in an "input" field as part of the API contract.
-    This function handles both formats for maximum compatibility.
-    
-    Streaming is enabled by default for better user experience.
+    Features:
+    - Diabetes and AMD specialist consultations
+    - Web search for latest medical information  
+    - Patient database lookup and search
+    - Memory integration for conversation persistence
+    - Streaming response support
     """
-    print("context:\n-------\n", context)
+    print("🚀 Medical Assistant Agent invoked!")
+    print(f"📦 Payload: {payload}")
+    print(f"🔧 Context: {context}")
+    
+    # Initialize memory and agent for this request
+    memory_id = get_memory_id()
+    actor_id = extract_user_id_from_context(context)
+    session_id = get_session_id_from_context(context)
+    
+    print(f"🧠 Memory setup: memory_id={memory_id}, actor_id={actor_id}, session_id={session_id}")
+    
+    # Create agent with memory configuration and patient database tools
+    agent = create_agent_with_memory(memory_id, actor_id, session_id)
     
     # Handle both dict and string payloads
     if isinstance(payload, str):
-        payload = json.loads(payload)
+        try:
+            payload = json.loads(payload)
+            print("✅ Parsed string payload to dict")
+        except json.JSONDecodeError as e:
+            print(f"❌ Failed to parse JSON: {e}")
+            yield {"error": f"Invalid JSON payload: {e}"}
+            return
     
     # Extract the prompt from the payload
-    # Try AWS SDK format first (most common for production): {"input": {"prompt": "..."}}
-    # Fall back to direct format: {"prompt": "..."}
     user_input = None
     stream = True  # Enable streaming by default
-    actor_id = None
-    session_id = None
     
     if isinstance(payload, dict):
         if "input" in payload and isinstance(payload["input"], dict):
             user_input = payload["input"].get("prompt")
-            actor_id = payload["input"].get("actor_id")
-            session_id = payload["input"].get("session_id")
-            # Check if streaming is explicitly disabled
             stream = payload["input"].get("stream", True)
+            print("📝 Using AWS SDK format (input wrapper)")
         else:
             user_input = payload.get("prompt")
-            actor_id = payload.get("actor_id")
-            session_id = payload.get("session_id")
-            # Check if streaming is explicitly disabled
             stream = payload.get("stream", True)
+            print("📝 Using direct format")
     
     if not user_input:
         user_input = "No prompt found in input, please guide customer to create a json payload with prompt key"
+        print("⚠️ No user input found, using default message")
     
     print("processing message:\n*******\n", user_input)
-    
-    # Set memory context if provided
-    if actor_id or session_id:
-        memory_manager.set_session_context(actor_id, session_id)
-    
-    # Get conversation history and user context
-    conversation_history = memory_manager.get_conversation_context(k=3)
-    user_context = memory_manager.get_user_context(user_input)
-    
-    # Enhance user input with context if available
-    enhanced_input = user_input
-    if user_context:
-        enhanced_input = f"{user_context}\n\n**Current Question:** {user_input}"
-    
-    # Save user message to memory
-    memory_manager.save_user_message(user_input)
+    print(f"streaming enabled: {stream}")
     
     # Use streaming response for better user experience
     if stream:
         try:
-            # Load conversation history into agent if available
-            if conversation_history:
-                # Create a temporary agent with conversation history
-                temp_agent = Agent(
-                    model=model,
-                    tools=[diabetes_specialist_tool, amd_specialist_tool, web_search],
-                    system_prompt=AGENT_SYSTEM_PROMPT + "\n\nNote: Use patient context provided to personalize responses, but don't mention outdated information explicitly.",
-                    messages=conversation_history
-                )
-                agent_stream = temp_agent.stream_async(enhanced_input)
-            else:
-                agent_stream = agent.stream_async(enhanced_input)
+            print("🌊 Starting streaming response...")
+            # Get the agent stream using async method
+            agent_stream = agent.stream_async(user_input)
             
-            # Collect response for memory storage
-            response_parts = []
+            event_count = 0
+            yielded_count = 0
+            has_yielded_content = False
             
-            # Stream events with garbage filtering - WORKING APPROACH
+            # Stream events with balanced filtering - clean but not too restrictive
             async for event in agent_stream:
-                # Convert event to string to check for garbage
-                event_str = str(event)
+                event_count += 1
                 
-                # If it contains obvious garbage metadata, skip it
-                if any(garbage in event_str for garbage in ['object at 0x', 'UUID(', 'event_loop_cycle_id', 'agent']):
-                    continue
+                # Debug: print first few events
+                if event_count <= 5:
+                    print(f"Event {event_count}: {type(event)} - {str(event)[:100]}...")
                 
-                # Collect response text for memory storage
-                if hasattr(event, 'content') and event.content:
-                    response_parts.append(event.content)
-                elif isinstance(event, dict) and 'content' in event:
-                    response_parts.append(event['content'])
-                
-                # Otherwise yield the event as normal
-                yield event
+                # Filter out complex objects but be more permissive
+                try:
+                    event_str = str(event)
+                    
+                    # Skip obvious garbage (object references)
+                    if 'object at 0x' in event_str and len(event_str) < 200:
+                        print(f"Skipping garbage event {event_count}")
+                        continue
+                    
+                    # Try to extract text content from various event types
+                    text_content = None
+                    
+                    if hasattr(event, 'data') and isinstance(event.data, str):
+                        text_content = event.data
+                    elif hasattr(event, 'delta') and hasattr(event.delta, 'text') and isinstance(event.delta.text, str):
+                        text_content = event.delta.text
+                    elif isinstance(event, str):
+                        text_content = event
+                    elif isinstance(event, dict):
+                        if 'text' in event:
+                            text_content = str(event['text'])
+                        elif 'data' in event:
+                            text_content = str(event['data'])
+                        elif 'content' in event:
+                            text_content = str(event['content'])
+                    
+                    # If we found text content, yield it
+                    if text_content and text_content.strip():
+                        yielded_count += 1
+                        has_yielded_content = True
+                        print(f"Yielding content {yielded_count}: '{text_content[:50]}...'")
+                        yield {"text": text_content}
+                    else:
+                        # For debugging: yield the event as-is if it's not obviously garbage
+                        if not ('object at 0x' in event_str or 'UUID(' in event_str or 'Trace object' in event_str):
+                            yielded_count += 1
+                            has_yielded_content = True
+                            print(f"Yielding raw event {yielded_count}: {type(event)}")
+                            yield event
+                        else:
+                            print(f"Skipping complex event {event_count}: {type(event)}")
+                        
+                except Exception as e:
+                    print(f"Error processing event {event_count}: {e}")
+                    # Try to yield the event anyway if it's not obviously garbage
+                    try:
+                        event_str = str(event)
+                        if not ('object at 0x' in event_str or len(event_str) > 1000):
+                            yielded_count += 1
+                            has_yielded_content = True
+                            yield event
+                    except:
+                        continue
             
-            # Save assistant response to memory
-            if response_parts:
-                full_response = ''.join(str(part) for part in response_parts)
-                memory_manager.save_assistant_message(full_response)
+            print(f"✅ Streaming completed: {event_count} total events, {yielded_count} yielded")
+            
+            # If no content was yielded, provide a fallback response
+            if not has_yielded_content:
+                print("⚠️ No content yielded from streaming, providing fallback")
+                fallback_response = agent(user_input)
+                yield {"result": fallback_response.message}
                 
         except Exception as e:
-            print(f"Streaming failed, falling back to regular response: {e}")
+            print(f"❌ Streaming failed: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            print("🔄 Falling back to non-streaming...")
             # Fall back to non-streaming
-            if conversation_history:
-                temp_agent = Agent(
-                    model=model,
-                    tools=[diabetes_specialist_tool, amd_specialist_tool, web_search],
-                    system_prompt=AGENT_SYSTEM_PROMPT + "\n\nNote: Use patient context provided to personalize responses, but don't mention outdated information explicitly.",
-                    messages=conversation_history
-                )
-                response = temp_agent(enhanced_input)
-            else:
-                response = agent(enhanced_input)
-            
-            # Save assistant response to memory
-            if hasattr(response, 'message'):
-                memory_manager.save_assistant_message(str(response.message))
-            
+            response = agent(user_input)
+            print(f"Non-streaming response: {response.message}")
             yield {"result": response.message}
     else:
+        print("📄 Using non-streaming response...")
         # Non-streaming response
-        if conversation_history:
-            temp_agent = Agent(
-                model=model,
-                tools=[diabetes_specialist_tool, amd_specialist_tool, web_search],
-                system_prompt=AGENT_SYSTEM_PROMPT + "\n\nNote: Use patient context provided to personalize responses, but don't mention outdated information explicitly.",
-                messages=conversation_history
-            )
-            response = temp_agent(enhanced_input)
-        else:
-            response = agent(enhanced_input)
-        
-        # Save assistant response to memory
-        if hasattr(response, 'message'):
-            memory_manager.save_assistant_message(str(response.message))
-        
+        response = agent(user_input)
+        print(f"Non-streaming response: {response.message}")
         yield {"result": response.message}
 
-def test_agent_setup():
-    """Simple test to verify agent setup without async context issues"""
-    print("🧪 Testing agent setup...")
-    
-    # Test that the agent is properly configured
-    print(f"✅ Model ID: {model_id}")
-    print(f"✅ Model configured: {type(model).__name__}")
-    
-    # Test tools (they're passed in during agent creation)
-    tools_list = [diabetes_specialist_tool, amd_specialist_tool, web_search]
-    print(f"✅ Tools available: {len(tools_list)}")
-    
-    # Get tool names safely
-    tool_names = []
-    for tool in tools_list:
-        if hasattr(tool, 'name'):
-            tool_names.append(tool.name)
-        elif hasattr(tool, '__name__'):
-            tool_names.append(tool.__name__)
-        else:
-            tool_names.append(str(type(tool).__name__))
-    
-    print(f"✅ Tool names: {tool_names}")
-    
-    # Test system prompt
-    print(f"✅ System prompt length: {len(AGENT_SYSTEM_PROMPT)} characters")
-    print(f"✅ Agent configured: {type(agent).__name__}")
-    
-    print("✅ Agent setup test completed successfully!")
-    print("💡 To test streaming, deploy the agent and use agentcore invoke")
-
-def test_agent_response():
-    """Test the agent's response to a simple query"""
-    print("🧪 Testing agent response...")
-    
-    try:
-        # Test with a simple medical query
-        test_query = "What are the main symptoms of diabetes?"
-        print(f"📝 Query: {test_query}")
-        
-        # Test memory integration
-        memory_manager.set_session_context("test_patient", "test_session")
-        
-        # Get user context (should be empty for new session)
-        user_context = memory_manager.get_user_context(test_query)
-        print(f"🧠 User context: {len(user_context)} characters")
-        
-        # Use the agent directly (non-streaming)
-        response = agent(test_query)
-        
-        print("✅ Agent responded successfully!")
-        print(f"📄 Response type: {type(response)}")
-        
-        # Try to extract the response content
-        if hasattr(response, 'message'):
-            message = response.message
-            if isinstance(message, dict) and 'content' in message:
-                content = message['content']
-                if isinstance(content, list) and len(content) > 0:
-                    text = content[0].get('text', str(content[0]))
-                    print(f"💬 Response preview: {text[:200]}...")
-                    
-                    # Save to memory for testing
-                    memory_manager.save_conversation_turn(test_query, text)
-                    print("🧠 Saved conversation to memory")
-                else:
-                    print(f"💬 Response content: {str(content)[:200]}...")
-            else:
-                print(f"💬 Response message: {str(message)[:200]}...")
-        else:
-            print(f"💬 Response: {str(response)[:200]}...")
-            
-        print("✅ Agent response test completed successfully!")
-        
-    except Exception as e:
-        print(f"❌ Agent response test failed: {e}")
-        print("💡 This is normal - the agent needs proper runtime context to work fully")
-
 if __name__ == "__main__":
-    # Uncomment to test agent response locally
-    # test_agent_response()
-    
     app.run()
