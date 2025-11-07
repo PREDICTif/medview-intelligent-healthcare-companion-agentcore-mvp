@@ -330,4 +330,71 @@ async def strands_agent_bedrock(payload, context):
         yield {"result": response.message}
 
 if __name__ == "__main__":
-    app.run()
+    # Local testing mode
+    print("🧪 Running in local test mode")
+    print("=" * 60)
+    
+    # Create a mock context for testing
+    class MockIdentity:
+        def __init__(self, sub=None, user_id=None, username=None):
+            self.sub = sub  # Cognito user ID
+            self.user_id = user_id
+            self.username = username
+    
+    class MockContext:
+        def __init__(self, identity=None, session_id=None, user_id=None):
+            self.identity = identity
+            self.session_id = session_id
+            self.user_id = user_id
+    
+    # Test different context scenarios
+    print("\n📋 Testing user ID extraction:")
+    print("-" * 60)
+    
+    # Test 1: With Cognito sub (most common in production)
+    print("\n1️⃣ Test with Cognito sub:")
+    mock_identity = MockIdentity(sub="cognito-user-123-abc-def")
+    mock_context = MockContext(identity=mock_identity, session_id="session-456")
+    user_id = extract_user_id_from_context(mock_context)
+    print(f"   Result: {user_id}")
+    assert user_id == "cognito-user-123-abc-def", "Should use Cognito sub"
+    
+    # Test 2: With user_id in identity
+    print("\n2️⃣ Test with identity.user_id:")
+    mock_identity = MockIdentity(user_id="user-789")
+    mock_context = MockContext(identity=mock_identity, session_id="session-456")
+    user_id = extract_user_id_from_context(mock_context)
+    print(f"   Result: {user_id}")
+    assert user_id == "user-789", "Should use identity.user_id"
+    
+    # Test 3: With username fallback
+    print("\n3️⃣ Test with username:")
+    mock_identity = MockIdentity(username="john.doe@example.com")
+    mock_context = MockContext(identity=mock_identity, session_id="session-456")
+    user_id = extract_user_id_from_context(mock_context)
+    print(f"   Result: {user_id}")
+    assert user_id == "john.doe@example.com", "Should use username"
+    
+    # Test 4: With session fallback
+    print("\n4️⃣ Test with session fallback:")
+    mock_context = MockContext(session_id="session-789")
+    user_id = extract_user_id_from_context(mock_context)
+    print(f"   Result: {user_id}")
+    assert user_id == "user_session-789", "Should use session-based ID"
+    
+    # Test 5: Default fallback
+    print("\n5️⃣ Test with default fallback:")
+    mock_context = MockContext()
+    user_id = extract_user_id_from_context(mock_context)
+    print(f"   Result: {user_id}")
+    assert user_id == "default_user", "Should use default"
+    
+    print("\n" + "=" * 60)
+    print("✅ All user ID extraction tests passed!")
+    print("\n💡 In production, AgentCore will provide:")
+    print("   - context.identity.sub = Cognito user ID (UUID)")
+    print("   - context.session_id = Session identifier")
+    print("   - These will be used for memory and personalization")
+    print("\n🚀 To run the agent locally, use:")
+    print("   app.run()")
+    print("=" * 60)
