@@ -1,0 +1,57 @@
+[
+  {
+    "name": "lookup_patient_record",
+    "description": "Look up a specific patient's medical record from the database",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "patient_identifier": {
+          "type": "string",
+          "description": "Patient ID or Medical Record Number (MRN) to search for"
+        }
+      },
+      "required": ["patient_identifier"]
+    }
+  },
+  {
+    "name": "get_diabetes_patients_list",
+    "description": "Retrieve a list of all patients with diabetes diagnosis",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "search_patients_by_name",
+    "description": "Search for patients by their first name and/or last name",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "first_name": {
+          "type": "string",
+          "description": "Patient's first name to search for (optional)"
+        },
+        "last_name": {
+          "type": "string",
+          "description": "Patient's last name to search for (optional)"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_patient_medication_list",
+    "description": "Get the current medication list for a specific patient",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "patient_identifier": {
+          "type": "string",
+          "description": "Patient ID or Medical Record Number (MRN)"
+        }
+      },
+      "required": ["patient_identifier"]
+    }
+  }
+]
