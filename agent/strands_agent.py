@@ -242,67 +242,40 @@ async def strands_agent_bedrock(payload, context):
             yielded_count = 0
             has_yielded_content = False
             
-            # Stream events with balanced filtering - clean but not too restrictive
+            # Stream events - only yield the actual event objects from Strands
             async for event in agent_stream:
                 event_count += 1
                 
                 # Debug: print first few events
-                if event_count <= 5:
-                    print(f"Event {event_count}: {type(event)} - {str(event)[:100]}...")
+                if event_count <= 10:
+                    print(f"Event {event_count}: {type(event).__name__}")
                 
-                # Filter out complex objects but be more permissive
+                # Only yield the event as-is - let AgentCore and frontend handle parsing
+                # Don't try to extract text here as it causes duplication
                 try:
+                    # Skip internal Python objects
                     event_str = str(event)
-                    
-                    # Skip obvious garbage (object references)
                     if 'object at 0x' in event_str and len(event_str) < 200:
-                        print(f"Skipping garbage event {event_count}")
+                        print(f"Skipping internal object {event_count}")
                         continue
                     
-                    # Try to extract text content from various event types
-                    text_content = None
+                    # Skip UUID and Trace objects
+                    if 'UUID(' in event_str or 'Trace object' in event_str:
+                        print(f"Skipping metadata object {event_count}")
+                        continue
                     
-                    if hasattr(event, 'data') and isinstance(event.data, str):
-                        text_content = event.data
-                    elif hasattr(event, 'delta') and hasattr(event.delta, 'text') and isinstance(event.delta.text, str):
-                        text_content = event.delta.text
-                    elif isinstance(event, str):
-                        text_content = event
-                    elif isinstance(event, dict):
-                        if 'text' in event:
-                            text_content = str(event['text'])
-                        elif 'data' in event:
-                            text_content = str(event['data'])
-                        elif 'content' in event:
-                            text_content = str(event['content'])
+                    # Yield the event as-is - Strands events are already properly formatted
+                    yielded_count += 1
+                    has_yielded_content = True
                     
-                    # If we found text content, yield it
-                    if text_content and text_content.strip():
-                        yielded_count += 1
-                        has_yielded_content = True
-                        print(f"Yielding content {yielded_count}: '{text_content[:50]}...'")
-                        yield {"text": text_content}
-                    else:
-                        # For debugging: yield the event as-is if it's not obviously garbage
-                        if not ('object at 0x' in event_str or 'UUID(' in event_str or 'Trace object' in event_str):
-                            yielded_count += 1
-                            has_yielded_content = True
-                            print(f"Yielding raw event {yielded_count}: {type(event)}")
-                            yield event
-                        else:
-                            print(f"Skipping complex event {event_count}: {type(event)}")
+                    if event_count <= 10:
+                        print(f"Yielding event {yielded_count}: {type(event).__name__}")
+                    
+                    yield event
                         
                 except Exception as e:
                     print(f"Error processing event {event_count}: {e}")
-                    # Try to yield the event anyway if it's not obviously garbage
-                    try:
-                        event_str = str(event)
-                        if not ('object at 0x' in event_str or len(event_str) > 1000):
-                            yielded_count += 1
-                            has_yielded_content = True
-                            yield event
-                    except:
-                        continue
+                    continue
             
             print(f"✅ Streaming completed: {event_count} total events, {yielded_count} yielded")
             
