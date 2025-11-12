@@ -1,9 +1,39 @@
 // Note: Using direct HTTP calls to AgentCore with JWT bearer tokens
 // as shown in AWS AgentCore documentation
+// AgentCore validates the client_id claim which is in Access Token, not ID Token
 import { getAccessToken } from './auth';
 
 const region = (import.meta as any).env?.VITE_REGION || 'us-east-1';
 const agentRuntimeArn = (import.meta as any).env?.VITE_AGENT_RUNTIME_ARN;
+
+// Session ID management for memory persistence
+// Create a user-specific session ID that persists across browser sessions
+// This allows AgentCore Memory to use the session_id as a stable user identifier
+const getUserSpecificSessionId = async (): Promise<string> => {
+  // Get current user to extract Cognito user ID
+  const { getCurrentUser } = await import('./auth');
+  const user = await getCurrentUser();
+  
+  if (!user || !user.sub) {
+    // Fallback to temporary session if user not available
+    const storageKey = 'agentcore_session_id';
+    let sessionId = sessionStorage.getItem(storageKey);
+    
+    if (!sessionId) {
+      sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`;
+      sessionStorage.setItem(storageKey, sessionId);
+    }
+    
+    return sessionId;
+  }
+  
+  // Create a stable session ID based on user ID
+  // Format: user_<cognito_user_id>_session
+  // This ensures the same user always gets the same session ID across browser sessions
+  const userSessionId = `user_${user.sub}_session`;
+  
+  return userSessionId;
+};
 
 export interface InvokeAgentRequest {
   prompt: string;
@@ -20,10 +50,18 @@ export const invokeAgent = async (request: InvokeAgentRequest): Promise<InvokeAg
       throw new Error('AgentCore Runtime ARN not configured. Please check deployment.');
     }
 
-    // Get JWT access token from Cognito (required for AgentCore as per AWS documentation)
+    // Get JWT Access token from Cognito (required for AgentCore as per AWS documentation)
+    // AgentCore validates the client_id claim which is present in Access Token
     const jwtToken = await getAccessToken();
     if (!jwtToken) {
       throw new Error('Not authenticated - no access token available');
+    }
+
+    // Get current user to extract Cognito user ID (sub) for memory scoping
+    const { getCurrentUser } = await import('./auth');
+    const user = await getCurrentUser();
+    if (!user || !user.sub) {
+      throw new Error('User not authenticated or missing user ID');
     }
 
     // URL encode the agent runtime ARN for the API call (as per AWS documentation)
@@ -32,15 +70,16 @@ export const invokeAgent = async (request: InvokeAgentRequest): Promise<InvokeAg
     // Use the correct AgentCore endpoint format from AWS documentation
     const url = `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/${encodedAgentRuntimeArn}/invocations?qualifier=DEFAULT`;
     
-    console.log('Invoking AgentCore directly:', { url, agentRuntimeArn, region });
-    console.log('Request payload:', { prompt: request.prompt });
+    // Get user-specific session ID (stable across browser sessions)
+    const sessionId = await getUserSpecificSessionId();
     
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${jwtToken}`,
-        'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': `testsession${Date.now()}${Math.random().toString(36).substring(2, 15)}`,
+        'X-Amzn-Bedrock-AgentCore-Runtime-User-Id': user.sub,  // Pass Cognito user ID for memory scoping
+        'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,  // Use persistent session ID
         'X-Amzn-Trace-Id': `trace-${Date.now()}`,
       },
       body: JSON.stringify({
@@ -104,10 +143,18 @@ export const invokeAgentStream = async (
       throw new Error('AgentCore Runtime ARN not configured. Please check deployment.');
     }
 
-    // Get JWT access token from Cognito
+    // Get JWT Access token from Cognito
+    // AgentCore validates the client_id claim which is present in Access Token
     const jwtToken = await getAccessToken();
     if (!jwtToken) {
       throw new Error('Not authenticated - no access token available');
+    }
+
+    // Get current user to extract Cognito user ID (sub) for memory scoping
+    const { getCurrentUser } = await import('./auth');
+    const user = await getCurrentUser();
+    if (!user || !user.sub) {
+      throw new Error('User not authenticated or missing user ID');
     }
 
     // URL encode the agent runtime ARN for the API call
@@ -116,15 +163,16 @@ export const invokeAgentStream = async (
     // Use the correct AgentCore endpoint format
     const url = `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/${encodedAgentRuntimeArn}/invocations?qualifier=DEFAULT`;
     
-    console.log('Invoking AgentCore with streaming:', { url, agentRuntimeArn, region });
-    console.log('Request payload:', { prompt: request.prompt });
+    // Get user-specific session ID (stable across browser sessions)
+    const sessionId = await getUserSpecificSessionId();
     
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${jwtToken}`,
-        'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': `testsession${Date.now()}${Math.random().toString(36).substring(2, 15)}`,
+        'X-Amzn-Bedrock-AgentCore-Runtime-User-Id': user.sub,  // Pass Cognito user ID for memory scoping
+        'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,  // Use persistent session ID
         'X-Amzn-Trace-Id': `trace-${Date.now()}`,
         'Accept': 'text/plain',  // Accept streaming response
       },
