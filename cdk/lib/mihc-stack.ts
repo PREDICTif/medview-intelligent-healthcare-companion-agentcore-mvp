@@ -157,7 +157,7 @@ export class MihcStack extends cdk.Stack {
     // Create Aurora Serverless v2 PostgreSQL cluster for development
     this.auroraCluster = new rds.DatabaseCluster(this, "MedicalDatabase", {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
-        version: rds.AuroraPostgresEngineVersion.VER_15_4,
+        version: rds.AuroraPostgresEngineVersion.VER_17_5,
       }),
       credentials: rds.Credentials.fromGeneratedSecret("postgres", {
         secretName: "mihc-medical-database-credentials",
@@ -197,7 +197,7 @@ export class MihcStack extends cdk.Stack {
       defaultDatabaseName: "medical_records",
       parameterGroup: new rds.ParameterGroup(this, "DatabaseParameterGroup", {
         engine: rds.DatabaseClusterEngine.auroraPostgres({
-          version: rds.AuroraPostgresEngineVersion.VER_15_4,
+          version: rds.AuroraPostgresEngineVersion.VER_17_5,
         }),
         description: "Parameter group for development medical database",
         parameters: {
@@ -314,9 +314,17 @@ export class MihcStack extends cdk.Stack {
       value: this.auroraCluster.clusterEndpoint.hostname,
       description: "Medical database cluster endpoint (development)",
     });
+    new cdk.CfnOutput(this, "DatabaseClusterArn", {
+      value: this.auroraCluster.clusterArn,
+      description: "Aurora PostgreSQL cluster ARN for RDS Data API",
+    });
     new cdk.CfnOutput(this, "MedicalDatabaseSecretArn", {
       value: this.auroraCluster.secret!.secretArn,
       description: "ARN of the encrypted medical database credentials",
+    });
+    new cdk.CfnOutput(this, "DatabaseSecretArn", {
+      value: this.auroraCluster.secret!.secretArn,
+      description: "Database credentials secret ARN (alias for migration scripts)",
     });
     
     new cdk.CfnOutput(this, "MedicalDatabaseSecretName", {
