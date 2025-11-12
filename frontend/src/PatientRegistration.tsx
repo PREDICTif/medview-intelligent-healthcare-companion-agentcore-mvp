@@ -86,6 +86,9 @@ export default function PatientRegistration() {
   const [middleName, setMiddleName] = useState('');
   const [dateOfBirth, setDateOfBirth] = useState('');
   const [gender, setGender] = useState<any>(null);
+  const [heightFeet, setHeightFeet] = useState('');
+  const [heightInches, setHeightInches] = useState('');
+  const [weightLbs, setWeightLbs] = useState('');
 
   // Contact Information
   const [phonePrimary, setPhonePrimary] = useState('');
@@ -138,6 +141,29 @@ export default function PatientRegistration() {
         newErrors.dateOfBirth = 'Invalid date format';
       } else if (dob > new Date()) {
         newErrors.dateOfBirth = 'Date of Birth cannot be in the future';
+      }
+    }
+
+    // Height validation (optional but must be valid if provided)
+    if (heightFeet.trim()) {
+      const feet = parseInt(heightFeet);
+      if (isNaN(feet) || feet < 3 || feet > 8) {
+        newErrors.heightFeet = 'Height must be between 3 and 8 feet';
+      }
+    }
+
+    if (heightInches.trim()) {
+      const inches = parseInt(heightInches);
+      if (isNaN(inches) || inches < 0 || inches > 11) {
+        newErrors.heightInches = 'Inches must be between 0 and 11';
+      }
+    }
+
+    // Weight validation (optional but must be valid if provided)
+    if (weightLbs.trim()) {
+      const weight = parseFloat(weightLbs);
+      if (isNaN(weight) || weight <= 0) {
+        newErrors.weightLbs = 'Weight must be a positive number';
       }
     }
 
@@ -196,6 +222,9 @@ export default function PatientRegistration() {
         middle_name: middleName.trim() || undefined,
         date_of_birth: dateOfBirth,
         gender: gender?.value || undefined,
+        height_feet: heightFeet ? parseInt(heightFeet) : undefined,
+        height_inches: heightInches ? parseInt(heightInches) : undefined,
+        weight_lbs: weightLbs ? parseFloat(weightLbs) : undefined,
         phone_primary: phonePrimary.trim() || undefined,
         phone_secondary: phoneSecondary.trim() || undefined,
         email: email.trim() || undefined,
@@ -237,6 +266,9 @@ export default function PatientRegistration() {
     setMiddleName('');
     setDateOfBirth('');
     setGender(null);
+    setHeightFeet('');
+    setHeightInches('');
+    setWeightLbs('');
     setPhonePrimary('');
     setPhoneSecondary('');
     setEmail('');
@@ -296,8 +328,14 @@ export default function PatientRegistration() {
               <SpaceBetween size="l">
                 <Grid gridDefinition={[{ colspan: 6 }, { colspan: 6 }]}>
                   <FormField
-                    label="Medical Record Number"
-                    constraintText="Required. Unique identifier for the patient"
+                    // label="Medical Record Number"
+                    label={
+                      <>
+                        Medical Record Number
+                        <span style={{ color: '#dc2626', marginLeft: '2px' }}>*</span>
+                      </>
+                    }
+                    // constraintText="Required. Unique identifier for the patient"
                     errorText={errors.medicalRecordNumber}
                   >
                     <Input
@@ -308,8 +346,12 @@ export default function PatientRegistration() {
                     />
                   </FormField>
                   <FormField
-                    label="Date of Birth"
-                    constraintText="Required"
+                    label={
+                      <>
+                        Date of Birth
+                        <span style={{ color: '#dc2626', marginLeft: '2px' }}>*</span>
+                      </>
+                    }
                     errorText={errors.dateOfBirth}
                   >
                     <DatePicker
@@ -323,8 +365,12 @@ export default function PatientRegistration() {
 
                 <Grid gridDefinition={[{ colspan: 4 }, { colspan: 4 }, { colspan: 4 }]}>
                   <FormField
-                    label="First Name"
-                    constraintText="Required"
+                    label={
+                      <>
+                        First Name
+                        <span style={{ color: '#dc2626', marginLeft: '2px' }}>*</span>
+                      </>
+                    }
                     errorText={errors.firstName}
                   >
                     <Input
@@ -342,8 +388,12 @@ export default function PatientRegistration() {
                     />
                   </FormField>
                   <FormField
-                    label="Last Name"
-                    constraintText="Required"
+                    label={
+                      <>
+                        Last Name
+                        <span style={{ color: '#dc2626', marginLeft: '2px' }}>*</span>
+                      </>
+                    }
                     errorText={errors.lastName}
                   >
                     <Input
@@ -363,6 +413,61 @@ export default function PatientRegistration() {
                     placeholder="Select gender"
                   />
                 </FormField>
+
+                <Grid gridDefinition={[{ colspan: 6 }, { colspan: 6 }]}>
+                  <FormField
+                    label="Height"
+                    errorText={errors.heightFeet}
+                  >
+                    <Grid gridDefinition={[{ colspan: 6 }, { colspan: 6 }]}>
+                      <FormField
+                        label="Feet"
+                        errorText={errors.heightFeet}
+                      >
+                        <Input
+                          value={heightFeet}
+                          onChange={({ detail }) => setHeightFeet(detail.value)}
+                          placeholder="5"
+                          type="number"
+                          inputMode="numeric"
+                          invalid={!!errors.heightFeet}
+                        />
+                      </FormField>
+                      <FormField
+                        label="Inches"
+                        errorText={errors.heightInches}
+                      >
+                        <Input
+                          value={heightInches}
+                          onChange={({ detail }) => setHeightInches(detail.value)}
+                          placeholder="8"
+                          type="number"
+                          inputMode="numeric"
+                          invalid={!!errors.heightInches}
+                        />
+                      </FormField>
+                    </Grid>
+                  </FormField>
+                  <FormField
+                    label={
+                      <>
+                        Weight
+                        <br />
+                        (lbs)
+                      </>
+                    }
+                    errorText={errors.weightLbs}
+                  >
+                    <Input
+                      value={weightLbs}
+                      onChange={({ detail }) => setWeightLbs(detail.value)}
+                      placeholder="150"
+                      type="number"
+                      inputMode="decimal"
+                      invalid={!!errors.weightLbs}
+                    />
+                  </FormField>
+                </Grid>
               </SpaceBetween>
             </Container>
 
@@ -530,7 +635,7 @@ export default function PatientRegistration() {
             </Container>
 
             <Box textAlign="center" color="text-body-secondary">
-              <small>All fields marked as "Required" must be filled out. Other fields are optional.</small>
+              <small>Fields marked with * are required. All other fields are optional.</small>
             </Box>
           </SpaceBetween>
         </Form>

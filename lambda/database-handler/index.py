@@ -257,14 +257,16 @@ def create_patient(patient_data: Dict[str, Any]):
         sql_query = """
             INSERT INTO patients (
                 patient_id, medical_record_number, first_name, last_name, middle_name,
-                date_of_birth, gender, phone_primary, phone_secondary, email,
+                date_of_birth, gender, height_feet, height_inches, weight_lbs,
+                phone_primary, phone_secondary, email,
                 address_line1, address_line2, city, state, zip_code, country,
                 emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
                 insurance_provider, insurance_policy_number, insurance_group_number,
                 created_by
             ) VALUES (
                 :patient_id::uuid, :medical_record_number, :first_name, :last_name, :middle_name,
-                :date_of_birth::date, :gender, :phone_primary, :phone_secondary, :email,
+                :date_of_birth::date, :gender, :height_feet, :height_inches, :weight_lbs,
+                :phone_primary, :phone_secondary, :email,
                 :address_line1, :address_line2, :city, :state, :zip_code, :country,
                 :emergency_contact_name, :emergency_contact_phone, :emergency_contact_relationship,
                 :insurance_provider, :insurance_policy_number, :insurance_group_number,
@@ -278,7 +280,8 @@ def create_patient(patient_data: Dict[str, Any]):
         field_mappings = [
             'patient_id',
             'medical_record_number', 'first_name', 'last_name', 'middle_name',
-            'date_of_birth', 'gender', 'phone_primary', 'phone_secondary', 'email',
+            'date_of_birth', 'gender', 'height_feet', 'height_inches', 'weight_lbs',
+            'phone_primary', 'phone_secondary', 'email',
             'address_line1', 'address_line2', 'city', 'state', 'zip_code', 'country',
             'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
             'insurance_provider', 'insurance_policy_number', 'insurance_group_number',
@@ -288,10 +291,23 @@ def create_patient(patient_data: Dict[str, Any]):
         for field in field_mappings:
             value = patient_data.get(field)
             if value is not None and value != '':
-                parameters.append({
-                    'name': field,
-                    'value': {'stringValue': str(value)}
-                })
+                # Use longValue for integer fields (height_feet, height_inches)
+                if field in ['height_feet', 'height_inches']:
+                    parameters.append({
+                        'name': field,
+                        'value': {'longValue': int(value)}
+                    })
+                # Use doubleValue for decimal fields (weight_lbs)
+                elif field == 'weight_lbs':
+                    parameters.append({
+                        'name': field,
+                        'value': {'doubleValue': float(value)}
+                    })
+                else:
+                    parameters.append({
+                        'name': field,
+                        'value': {'stringValue': str(value)}
+                    })
             else:
                 parameters.append({
                     'name': field,
