@@ -13,8 +13,6 @@ from patient_tools import lookup_patient_record, get_diabetes_patients_list, sea
 
 # Import memory components
 from bedrock_agentcore.memory import MemoryClient
-from memory_hook_provider import MemoryHook
-from strands.hooks import HookRegistry
 
 # Set environment variable to bypass tool consent
 os.environ["BYPASS_TOOL_CONSENT"] = "true"
@@ -68,52 +66,26 @@ def get_memory_id():
 
 def extract_user_id_from_context(context) -> str:
     """
-    Extract Cognito user ID from AgentCore context
+    Extract user ID from AgentCore context
     
-    Priority order:
-    1. context.identity.sub (Cognito user ID from JWT token)
-    2. context.identity.user_id (alternative user ID field)
-    3. context.user_id (direct user ID)
-    4. Fallback to session-based ID
+    The frontend sends a user-specific session_id in format: user_<cognito_user_id>_session
+    This allows us to use the session_id directly as a stable user identifier for memory.
     """
-    print(f"🔍 Extracting user ID from context: {type(context)}")
-    
-    # Try to get Cognito sub (user ID) from identity
-    if hasattr(context, 'identity') and context.identity:
-        print(f"   Found identity object: {type(context.identity)}")
-        
-        # Cognito sub is the primary user identifier
-        if hasattr(context.identity, 'sub') and context.identity.sub:
-            cognito_user_id = context.identity.sub
-            print(f"✅ Using Cognito user ID (sub): {cognito_user_id}")
-            return cognito_user_id
-        
-        # Alternative user_id field
-        if hasattr(context.identity, 'user_id') and context.identity.user_id:
-            user_id = context.identity.user_id
-            print(f"✅ Using identity user_id: {user_id}")
-            return user_id
-        
-        # Check for username as fallback
-        if hasattr(context.identity, 'username') and context.identity.username:
-            username = context.identity.username
-            print(f"✅ Using identity username: {username}")
-            return username
-    
-    # Direct user_id on context
-    if hasattr(context, 'user_id') and context.user_id:
-        user_id = context.user_id
-        print(f"✅ Using context user_id: {user_id}")
-        return user_id
-    
-    # Fallback to session_id
+    # Use session_id directly - frontend sends user-specific session ID
     if hasattr(context, 'session_id') and context.session_id:
-        session_based_id = f"user_{context.session_id}"
-        print(f"⚠️ Using session-based ID: {session_based_id}")
-        return session_based_id
+        session_id = context.session_id
+        
+        # Check if this is a user-specific session ID (format: user_<cognito_user_id>_session)
+        if session_id.startswith('user_') and '_session' in session_id:
+            # Extract the user ID from the session ID
+            # Format: user_94c894a8-e0c1-7059-39f2-0cbe3c207746_session
+            user_id = session_id.replace('user_', '').replace('_session', '')
+            return user_id
+        else:
+            # Legacy session ID format - use as-is
+            return session_id
     
     # Last resort default
-    print("⚠️ Using default user ID")
     return "default_user"
 
 def get_session_id_from_context(context) -> str:
@@ -123,7 +95,7 @@ def get_session_id_from_context(context) -> str:
     return "default_session"
 
 def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> Agent:
-    """Create agent with memory hook configured"""
+    """Create agent with AgentCore Memory session manager"""
     model_id = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     model = BedrockModel(
         model_id=model_id,
@@ -131,7 +103,30 @@ def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> 
         temperature=0.1,
     )
     
-    # Create agent with patient database tools
+    # Configure AgentCore Memory session manager if available
+    session_manager = None
+    if memory_id:
+        try:
+            from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig
+            from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
+            
+            # Create memory configuration
+            memory_config = AgentCoreMemoryConfig(
+                memory_id=memory_id,
+                session_id=session_id,
+                actor_id=actor_id
+            )
+            
+            # Create session manager
+            session_manager = AgentCoreMemorySessionManager(
+                agentcore_memory_config=memory_config,
+                region_name="us-east-1"
+            )
+        except Exception as e:
+            print(f"Memory configuration failed: {e}")
+            session_manager = None
+    
+    # Create agent with patient database tools and session manager
     agent = Agent(
         model=model,
         tools=[
@@ -143,34 +138,9 @@ def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> 
             search_patients_by_name,         # Search patients by name
             get_patient_medication_list      # Get patient medications
         ],
-        system_prompt=AGENT_SYSTEM_PROMPT
+        system_prompt=AGENT_SYSTEM_PROMPT,
+        session_manager=session_manager  # Pass session manager to agent
     )
-    
-    # Add memory hook if memory_id and memory_client are available
-    if memory_id and memory_client:
-        try:
-            print(f"🧠 Configuring memory: memory_id={memory_id}, actor_id={actor_id}, session_id={session_id}")
-            memory_hook = MemoryHook(
-                memory_client=memory_client,
-                memory_id=memory_id,
-                actor_id=actor_id,
-                session_id=session_id
-            )
-            
-            # Register memory hooks
-            hook_registry = HookRegistry()
-            memory_hook.register_hooks(hook_registry)
-            agent.hook_registry = hook_registry
-            
-            print("✅ Memory hooks registered successfully")
-        except Exception as e:
-            print(f"⚠️ Memory hook registration failed: {e}")
-            print("🔄 Continuing without memory...")
-    else:
-        if not memory_id:
-            print("⚠️ No memory_id available, running without memory")
-        if not memory_client:
-            print("⚠️ Memory client not available, running without memory")
     
     return agent
 
@@ -186,16 +156,10 @@ async def strands_agent_bedrock(payload, context):
     - Memory integration for conversation persistence
     - Streaming response support
     """
-    print("🚀 Medical Assistant Agent invoked!")
-    print(f"📦 Payload: {payload}")
-    print(f"🔧 Context: {context}")
-    
     # Initialize memory and agent for this request
     memory_id = get_memory_id()
     actor_id = extract_user_id_from_context(context)
     session_id = get_session_id_from_context(context)
-    
-    print(f"🧠 Memory setup: memory_id={memory_id}, actor_id={actor_id}, session_id={session_id}")
     
     # Create agent with memory configuration and patient database tools
     agent = create_agent_with_memory(memory_id, actor_id, session_id)
@@ -204,9 +168,7 @@ async def strands_agent_bedrock(payload, context):
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
-            print("✅ Parsed string payload to dict")
         except json.JSONDecodeError as e:
-            print(f"❌ Failed to parse JSON: {e}")
             yield {"error": f"Invalid JSON payload: {e}"}
             return
     
@@ -218,88 +180,54 @@ async def strands_agent_bedrock(payload, context):
         if "input" in payload and isinstance(payload["input"], dict):
             user_input = payload["input"].get("prompt")
             stream = payload["input"].get("stream", True)
-            print("📝 Using AWS SDK format (input wrapper)")
         else:
             user_input = payload.get("prompt")
             stream = payload.get("stream", True)
-            print("📝 Using direct format")
     
     if not user_input:
         user_input = "No prompt found in input, please guide customer to create a json payload with prompt key"
-        print("⚠️ No user input found, using default message")
-    
-    print("processing message:\n*******\n", user_input)
-    print(f"streaming enabled: {stream}")
     
     # Use streaming response for better user experience
     if stream:
         try:
-            print("🌊 Starting streaming response...")
             # Get the agent stream using async method
             agent_stream = agent.stream_async(user_input)
             
-            event_count = 0
-            yielded_count = 0
             has_yielded_content = False
             
             # Stream events - only yield the actual event objects from Strands
             async for event in agent_stream:
-                event_count += 1
-                
-                # Debug: print first few events
-                if event_count <= 10:
-                    print(f"Event {event_count}: {type(event).__name__}")
-                
                 # Only yield the event as-is - let AgentCore and frontend handle parsing
-                # Don't try to extract text here as it causes duplication
                 try:
                     # Skip internal Python objects
                     event_str = str(event)
                     if 'object at 0x' in event_str and len(event_str) < 200:
-                        print(f"Skipping internal object {event_count}")
                         continue
                     
                     # Skip UUID and Trace objects
                     if 'UUID(' in event_str or 'Trace object' in event_str:
-                        print(f"Skipping metadata object {event_count}")
                         continue
                     
                     # Yield the event as-is - Strands events are already properly formatted
-                    yielded_count += 1
                     has_yielded_content = True
-                    
-                    if event_count <= 10:
-                        print(f"Yielding event {yielded_count}: {type(event).__name__}")
-                    
                     yield event
                         
-                except Exception as e:
-                    print(f"Error processing event {event_count}: {e}")
+                except Exception:
                     continue
-            
-            print(f"✅ Streaming completed: {event_count} total events, {yielded_count} yielded")
             
             # If no content was yielded, provide a fallback response
             if not has_yielded_content:
-                print("⚠️ No content yielded from streaming, providing fallback")
                 fallback_response = agent(user_input)
                 yield {"result": fallback_response.message}
                 
         except Exception as e:
-            print(f"❌ Streaming failed: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            print("🔄 Falling back to non-streaming...")
+            print(f"Streaming failed: {e}")
             # Fall back to non-streaming
             response = agent(user_input)
-            print(f"Non-streaming response: {response.message}")
             yield {"result": response.message}
     else:
-        print("📄 Using non-streaming response...")
         # Non-streaming response
         response = agent(user_input)
-        print(f"Non-streaming response: {response.message}")
         yield {"result": response.message}
 
 if __name__ == "__main__":
