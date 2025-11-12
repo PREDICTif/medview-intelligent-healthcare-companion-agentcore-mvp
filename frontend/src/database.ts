@@ -14,6 +14,9 @@ export interface PatientData {
   middle_name?: string;
   date_of_birth: string;
   gender?: string;
+  height_feet?: number;
+  height_inches?: number;
+  weight_lbs?: number;
   phone_primary?: string;
   phone_secondary?: string;
   email?: string;

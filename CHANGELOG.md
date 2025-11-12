@@ -1,5 +1,43 @@
 # Medview Intelligent Healthcare Companion - Changelog
 
+## 2025-11-10 - Height & Weight Fields Added to Patient Registration
+
+### Fixed
+- **Aurora PostgreSQL Version**: Updated from VER_15_4 to VER_15_5 (version 15.4 no longer available in AWS)
+  - File: `cdk/lib/mihc-stack.ts`
+  - Previous deployment failed with "Cannot find version 15.4 for aurora-postgresql"
+  
+- **CDK Stack Outputs**: Added missing `DatabaseClusterArn` and `DatabaseSecretArn` outputs to MihcStack for migration script support
+  - File: `cdk/lib/mihc-stack.ts`
+  - Required for database migration scripts to retrieve connection information
+
+### Added
+- **Height and Weight Fields**: Patient registration form now collects required height (feet & inches) and weight (lbs) during registration
+  - Files: `frontend/src/PatientRegistration.tsx`, `frontend/src/database.ts`, `lambda/database-handler/index.py`, `database/schema/01_core_tables.sql`
+  - Height input: Two fields (feet: 3-8 range, inches: 0-11 range)
+  - Weight input: Single decimal field (positive values required)
+  - Validation: All three fields are required with range constraints
+  - Database: Added height_feet (INTEGER), height_inches (INTEGER), weight_lbs (DECIMAL(5,2)) columns with CHECK constraints
+  
+- **Database Migration System**: Created Python-based migration script for database schema changes
+  - Files: `database/migrations/add_height_weight_to_patients.sql`, `scripts/migrate_add_height_weight.py`
+  - Automatically retrieves database credentials from CloudFormation stack
+  - Executes SQL migrations via RDS Data API
+  - Verifies successful migration completion
+  - Usage: `cd scripts && python migrate_add_height_weight.py`
+
+### Modified
+- `frontend/src/PatientRegistration.tsx`: Added height/weight state variables, validation logic, UI inputs in Personal Information section
+- `frontend/src/database.ts`: Updated PatientData interface with height_feet, height_inches, weight_lbs fields
+- `lambda/database-handler/index.py`: Updated create_patient function to handle new numeric fields with proper type casting (longValue for integers, doubleValue for decimals)
+- `database/schema/01_core_tables.sql`: Added Physical Measurements section with height and weight columns including CHECK constraints
+
+### Why It Matters
+- Enables comprehensive patient health data collection at registration
+- Provides foundation for BMI calculation and health monitoring features
+- Ensures data integrity through database-level constraints
+- Simplifies future schema updates with reusable migration script pattern
+
 ## 2025-10-30 - Patient Registration Feature + Lambda Function URL Fix (Updated)
 
 ### Fixed - Deployed App Error

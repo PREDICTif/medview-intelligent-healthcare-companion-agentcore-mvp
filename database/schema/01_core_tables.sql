@@ -25,6 +25,12 @@ CREATE TABLE patients (
     middle_name VARCHAR(100),
     date_of_birth DATE NOT NULL,
     gender VARCHAR(20),
+    
+    -- Physical Measurements
+    height_feet INTEGER CHECK (height_feet >= 3 AND height_feet <= 8),
+    height_inches INTEGER CHECK (height_inches >= 0 AND height_inches <= 11),
+    weight_lbs DECIMAL(5,2) CHECK (weight_lbs > 0),
+    
     ssn_encrypted TEXT, -- Encrypted SSN for HIPAA compliance
     
     -- Contact Information
