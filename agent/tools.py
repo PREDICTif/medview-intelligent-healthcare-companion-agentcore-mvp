@@ -1,12 +1,19 @@
+"""
+Consolidated Tools for Medical Assistant Agent
+All agent tools in one place for easier management
+"""
+
 import warnings
-# Suppress all deprecation warnings at the start
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import boto3
 import json
 import os
-import asyncio, re
+import asyncio
+import re
+import requests
 from strands import Agent, tool
+from typing import Optional, Dict, Any
 from prompts import (
     DIABETES_CONSULTATION_FRAMEWORKS, 
     DIABETES_CLINICAL_RECOMMENDATIONS,
@@ -22,6 +29,7 @@ from prompts import (
     get_consultation_type,
     format_patient_context
 )
+
 # Try different import locations for Document class (LangChain versions vary)
 try:
     from langchain_core.documents import Document
@@ -33,13 +41,7 @@ except ImportError:
             from langchain.docstore.document import Document
         except ImportError:
             from langchain_community.docstore.document import Document
-# Heavy imports commented out to reduce Lambda deployment complexity
-# from strands_tools import agent_graph, retrieve
-# from langchain_aws import ChatBedrockConverse, BedrockEmbeddings
-# from ragas import SingleTurnSample
-# from ragas.metrics import LLMContextPrecisionWithoutReference
-# from ragas.llms import LangchainLLMWrapper
-# from ragas.embeddings import LangchainEmbeddingsWrapper
+
 # Try to import TavilySearch, make it optional for local testing
 try:
     from langchain_tavily import TavilySearch
@@ -49,32 +51,17 @@ except ImportError:
     TavilySearch = None
     TAVILY_AVAILABLE = False
 
-# RAGAS evaluation setup (commented out)
-# eval_modelId = 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
-# thinking_params= {
-#     "thinking": {
-#         "type": "disabled"
-#     }
-# }
-# llm_for_evaluation = ChatBedrockConverse(model_id=eval_modelId, additional_model_request_fields=thinking_params)
-# llm_for_evaluation = LangchainLLMWrapper(llm_for_evaluation)
-
-# Use Bedrock embeddings with the wrapper (commented out)
-# bedrock_embeddings_client = BedrockEmbeddings(model_id="amazon.titan-embed-text-v2:0")
-# bedrock_embeddings = LangchainEmbeddingsWrapper(bedrock_embeddings_client)
-
 # Load environment variables (try .env file for local development)
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    # dotenv not available in production, that's fine
     pass
 
 # Get TAVILY_API_KEY from environment
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
 
-# Initialize Tavily search tool with the modern API (only if available and API key is set)
+# Initialize Tavily search tool
 web_search_tool = None
 if TAVILY_AVAILABLE and TAVILY_API_KEY:
     try:
@@ -88,29 +75,67 @@ elif not TAVILY_AVAILABLE:
 elif not TAVILY_API_KEY:
     print("⚠️ Warning: TAVILY_API_KEY not found. Web search will not be available.")
 
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def get_ssm_parameter(parameter_name: str) -> Optional[str]:
+    """Get parameter from SSM"""
+    try:
+        ssm = boto3.client('ssm')
+        response = ssm.get_parameter(Name=parameter_name, WithDecryption=True)
+        return response['Parameter']['Value']
+    except Exception:
+        return None
+
+
+def get_lambda_url() -> Optional[str]:
+    """Get the Lambda Function URL from SSM"""
+    return get_ssm_parameter("/app/medicalassistant/agentcore/lambda_url")
+
+
+def get_current_user_id() -> Optional[str]:
+    """Get the current user's Cognito user ID from the session context"""
+    user_id = os.environ.get('AGENTCORE_USER_ID')
+    if user_id:
+        return user_id
+    
+    session_user = os.environ.get('AGENTCORE_SESSION_USER')
+    if session_user:
+        try:
+            user_data = json.loads(session_user)
+            return user_data.get('sub') or user_data.get('user_id')
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    
+    test_user_id = os.environ.get('TEST_USER_ID')
+    if test_user_id:
+        return test_user_id
+    
+    return None
+
+
+def get_patient_id_for_current_user() -> Optional[str]:
+    """Get the patient_id for the currently authenticated user"""
+    user_id = get_current_user_id()
+    if not user_id:
+        return None
+    return user_id
+
+
 def _query_knowledge_base_internal(query: str, kb_name: str = "diabetes-agent-kb"):
-    """
-    Internal helper function to query the medical knowledge base.
-    
-    Args:
-        query (str): The medical question to search for
-        kb_name (str): Name of the knowledge base (defaults to diabetes KB)
-    
-    Returns:
-        str: Formatted results from the knowledge base with scores and content
-    """
+    """Internal helper function to query the medical knowledge base"""
     try:
         print(f"---KNOWLEDGE BASE QUERY---")
         print(f"Query: {query}")
         print(f"KB Name: {kb_name}")
         
-        # Get current region from session or environment
         session = boto3.Session()
         region_name = session.region_name or os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
         
         print(f"Using AWS region: {region_name}")
         
-        # Get KB ID from Parameter Store
         ssm_client = boto3.client('ssm', region_name=region_name)
         parameter_name = f"/bedrock/knowledge-base/{kb_name}/kb-id"
         
@@ -119,7 +144,6 @@ def _query_knowledge_base_internal(query: str, kb_name: str = "diabetes-agent-kb
             kb_id = response['Parameter']['Value']
             print(f"Found KB ID: {kb_id}")
         except ssm_client.exceptions.ParameterNotFound:
-            # Try to find any diabetes-related KB
             try:
                 response = ssm_client.get_parameters_by_path(
                     Path="/bedrock/knowledge-base/",
@@ -145,7 +169,6 @@ def _query_knowledge_base_internal(query: str, kb_name: str = "diabetes-agent-kb
             except Exception as e:
                 return f"Error accessing Parameter Store: {str(e)}"
         
-        # Query the Knowledge Base with explicit region and configuration
         bedrock_runtime = boto3.client(
             'bedrock-agent-runtime', 
             region_name=region_name,
@@ -172,7 +195,6 @@ def _query_knowledge_base_internal(query: str, kb_name: str = "diabetes-agent-kb
         if not results:
             return f"No results found in knowledge base for query: {query}"
         
-        # Format results for the agent
         formatted_results = f"Knowledge Base Results for: {query}\n\n"
         
         for i, result in enumerate(results, 1):
@@ -193,78 +215,10 @@ def _query_knowledge_base_internal(query: str, kb_name: str = "diabetes-agent-kb
         print(error_msg)
         return error_msg
 
-# @tool
-# def check_chunks_relevance(results: str, question: str):
-#     """
-#     Evaluates the relevance of retrieved chunks to the user question using RAGAs.
-#     COMMENTED OUT: This tool uses asyncio and RAGAS which can cause Lambda deployment issues.
-#     
-#     Args:
-#         results (str): Retrieval output as a string with 'Score:' and 'Content:' patterns.
-#         question (str): Original user question.
-# 
-#     Returns:
-#         dict: A binary score ('yes' or 'no') and the numeric relevance score, or an error message.
-#     """
-#     try:
-#         if not results or not isinstance(results, str):
-#             raise ValueError("Invalid input: 'results' must be a non-empty string.")
-#         if not question or not isinstance(question, str):
-#             raise ValueError("Invalid input: 'question' must be a non-empty string.")
-# 
-#         # Extract content chunks using regex
-#         pattern = r"Score:.*?\nContent:\s*(.*?)(?=Score:|\Z)"
-#         docs = [chunk.strip() for chunk in re.findall(pattern, results, re.DOTALL)]
-# 
-#         if not docs:
-#             raise ValueError("No valid content chunks found in 'results'.")
-# 
-#         # Prepare evaluation sample
-#         sample = SingleTurnSample(
-#             user_input=question,
-#             response="placeholder-response",  # required dummy response
-#             retrieved_contexts=docs
-#         )
-# 
-#         # Evaluate using context precision metric
-#         scorer = LLMContextPrecisionWithoutReference(llm=llm_for_evaluation)
-#         
-#         # Handle asyncio in Lambda environment
-#         try:
-#             # Try to get existing event loop
-#             loop = asyncio.get_event_loop()
-#             if loop.is_running():
-#                 # If loop is already running (like in Lambda), create a task
-#                 import concurrent.futures
-#                 with concurrent.futures.ThreadPoolExecutor() as executor:
-#                     future = executor.submit(asyncio.run, scorer.single_turn_ascore(sample))
-#                     score = future.result()
-#             else:
-#                 score = asyncio.run(scorer.single_turn_ascore(sample))
-#         except RuntimeError:
-#             # Fallback for Lambda environment
-#             score = asyncio.run(scorer.single_turn_ascore(sample))
-# 
-#         print("------------------------")
-#         print("Context evaluation")
-#         print("------------------------")
-#         print(f"chunk_relevance_score: {score}")
-# 
-#         return {
-#             "chunk_relevance_score": "yes" if score > 0.5 else "no",
-#             "chunk_relevance_value": score
-#         }
-# 
-#     except Exception as e:
-#         return {
-#             "error": str(e),
-#             "chunk_relevance_score": "unknown",
-#             "chunk_relevance_value": None
-#         }
 
-
-
-
+# =============================================================================
+# SPECIALIST CONSULTATION TOOLS
+# =============================================================================
 
 @tool
 def diabetes_specialist_tool(patient_query: str, patient_context: str = ""):
@@ -280,7 +234,7 @@ def diabetes_specialist_tool(patient_query: str, patient_context: str = ""):
     
     Args:
         patient_query (str): The patient's question or concern about diabetes
-        patient_context (str): Optional context about the patient (age, type of diabetes, current medications, etc.)
+        patient_context (str): Optional context about the patient
     
     Returns:
         str: Comprehensive diabetes consultation response with evidence-based recommendations
@@ -290,27 +244,21 @@ def diabetes_specialist_tool(patient_query: str, patient_context: str = ""):
         print(f"Patient Query: {patient_query}")
         print(f"Patient Context: {patient_context}")
         
-        # Enhanced query for knowledge base search
         enhanced_query = f"diabetes {patient_query}"
         if patient_context:
             enhanced_query += f" {patient_context}"
         
-        # Query the knowledge base first
         kb_results = _query_knowledge_base_internal(enhanced_query, "diabetes-agent-kb")
         
-        # Analyze the query type to provide specialized guidance
         consultation_type = get_consultation_type(patient_query, DIABETES_KEYWORDS)
         
-        # Get the appropriate specialist guidance
         specialist_guidance = DIABETES_CONSULTATION_FRAMEWORKS.get(
             consultation_type, 
             DIABETES_CONSULTATION_FRAMEWORKS["general"]
         )
         
-        # Format patient context
         patient_context_section = format_patient_context(patient_context)
         
-        # Format the comprehensive response using template
         response = DIABETES_CONSULTATION_TEMPLATE.format(
             patient_query=patient_query,
             patient_context_section=patient_context_section,
@@ -328,10 +276,11 @@ def diabetes_specialist_tool(patient_query: str, patient_context: str = ""):
         print(error_msg)
         return error_msg
 
+
 @tool
 def amd_specialist_tool(patient_query: str, patient_context: str = ""):
     """
-    Specialized Age-related Macular Degeneration (AMD) consultation tool that provides comprehensive AMD-related guidance.
+    Specialized Age-related Macular Degeneration (AMD) consultation tool.
     
     This tool combines knowledge base search with specialized AMD expertise to provide:
     - Early detection and risk assessment
@@ -343,7 +292,7 @@ def amd_specialist_tool(patient_query: str, patient_context: str = ""):
     
     Args:
         patient_query (str): The patient's question or concern about AMD or vision problems
-        patient_context (str): Optional context about the patient (age, family history, current vision status, etc.)
+        patient_context (str): Optional context about the patient
     
     Returns:
         str: Comprehensive AMD consultation response with evidence-based recommendations
@@ -353,27 +302,21 @@ def amd_specialist_tool(patient_query: str, patient_context: str = ""):
         print(f"Patient Query: {patient_query}")
         print(f"Patient Context: {patient_context}")
         
-        # Enhanced query for knowledge base search
         enhanced_query = f"age-related macular degeneration AMD {patient_query}"
         if patient_context:
             enhanced_query += f" {patient_context}"
         
-        # Query the knowledge base first
         kb_results = _query_knowledge_base_internal(enhanced_query, "diabetes-agent-kb")
         
-        # Analyze the query type to provide specialized guidance
         consultation_type = get_consultation_type(patient_query, AMD_KEYWORDS)
         
-        # Get the appropriate specialist guidance
         specialist_guidance = AMD_CONSULTATION_FRAMEWORKS.get(
             consultation_type, 
             AMD_CONSULTATION_FRAMEWORKS["general"]
         )
         
-        # Format patient context
         patient_context_section = format_patient_context(patient_context)
         
-        # Format the comprehensive response using template
         response = AMD_CONSULTATION_TEMPLATE.format(
             patient_query=patient_query,
             patient_context_section=patient_context_section,
@@ -392,6 +335,7 @@ def amd_specialist_tool(patient_query: str, patient_context: str = ""):
         print(error_msg)
         return error_msg
 
+
 @tool
 def web_search(query):
     """
@@ -403,11 +347,9 @@ def web_search(query):
     Returns:
         str: Formatted web search results or error message
     """
-
     print("---WEB SEARCH---")
     print(f"Query: {query}")
 
-    # Check if web search tool is available
     if web_search_tool is None:
         if not TAVILY_AVAILABLE:
             error_msg = "Web search is not available. langchain_tavily package is not installed."
@@ -419,7 +361,6 @@ def web_search(query):
         return error_msg
 
     try:
-        # Perform web search
         docs = web_search_tool.invoke({"query": query})
         
         print(f"Raw web search response: {docs}")
@@ -428,7 +369,6 @@ def web_search(query):
         if not docs:
             return f"No web search results found for query: {query}"
 
-        # Format results for the agent
         formatted_results = f"Web Search Results for: {query}\n\n"
         
         for i, doc in enumerate(docs, 1):
@@ -449,3 +389,318 @@ def web_search(query):
         error_msg = f"Web search failed: {str(e)}"
         print(f"❌ {error_msg}")
         return error_msg
+
+
+# =============================================================================
+# PERSONAL MEDICATION TOOLS (Privacy-Safe)
+# =============================================================================
+
+@tool
+def get_my_medications() -> str:
+    """
+    Get YOUR current medication list.
+    
+    This tool shows the medications for the currently logged-in user only.
+    No patient ID or medical record number is needed - it automatically uses
+    your authenticated session to retrieve your personal medication information.
+    
+    Returns:
+        Your current medications with details including medication name, dosage,
+        frequency, status, and instructions.
+    """
+    try:
+        patient_id = get_patient_id_for_current_user()
+        
+        if not patient_id:
+            return """❌ **Authentication Required**
+
+I cannot access your medication information because you are not logged in.
+
+Please sign in to view your medications."""
+        
+        lambda_url = get_lambda_url()
+        if not lambda_url:
+            return "❌ Medication database is temporarily unavailable. Please try again later."
+        
+        base_url = lambda_url.rstrip('/')
+        medications_payload = {
+            "action": "get_patient_medications",
+            "patient_id": patient_id
+        }
+        
+        med_response = requests.post(base_url, json=medications_payload, timeout=30)
+        
+        if med_response.status_code == 200:
+            med_data = med_response.json()
+            
+            if med_data.get('status') == 'success':
+                medications = med_data.get('medications', [])
+                
+                summary = "💊 **Your Current Medications**\n\n"
+                
+                if not medications:
+                    summary += "📋 **No medications found in your record.**\n\n"
+                    summary += "You currently have no recorded medications in the system.\n\n"
+                    summary += "⚠️ If you are taking medications, please inform your healthcare provider to update your records."
+                    return summary
+                
+                active_meds = [m for m in medications if m.get('medication_status') == 'Active']
+                discontinued_meds = [m for m in medications if m.get('medication_status') == 'Discontinued']
+                completed_meds = [m for m in medications if m.get('medication_status') == 'Completed']
+                
+                if active_meds:
+                    summary += f"✅ **Active Medications ({len(active_meds)}):**\n\n"
+                    for i, med in enumerate(active_meds, 1):
+                        summary += f"{i}. **{med.get('medication_name', 'Unknown')}**"
+                        if med.get('generic_name'):
+                            summary += f" ({med.get('generic_name')})"
+                        summary += "\n"
+                        summary += f"   - **Dosage:** {med.get('dosage', 'N/A')}\n"
+                        summary += f"   - **How to take:** {med.get('frequency', 'N/A')}\n"
+                        summary += f"   - **Route:** {med.get('route', 'N/A')}\n"
+                        if med.get('prescription_date'):
+                            summary += f"   - **Prescribed:** {med.get('prescription_date')}\n"
+                        if med.get('refills_remaining') is not None:
+                            summary += f"   - **Refills remaining:** {med.get('refills_remaining')}\n"
+                        if med.get('instructions'):
+                            summary += f"   - **Instructions:** {med.get('instructions')}\n"
+                        if med.get('notes'):
+                            summary += f"   - **Notes:** {med.get('notes')}\n"
+                        summary += "\n"
+                
+                if discontinued_meds:
+                    summary += f"⏸️ **Discontinued Medications ({len(discontinued_meds)}):**\n\n"
+                    for i, med in enumerate(discontinued_meds, 1):
+                        summary += f"{i}. **{med.get('medication_name', 'Unknown')}**"
+                        if med.get('generic_name'):
+                            summary += f" ({med.get('generic_name')})"
+                        summary += "\n"
+                        summary += f"   - **Dosage:** {med.get('dosage', 'N/A')}\n"
+                        if med.get('discontinuation_reason'):
+                            summary += f"   - **Reason discontinued:** {med.get('discontinuation_reason')}\n"
+                        if med.get('end_date'):
+                            summary += f"   - **Discontinued on:** {med.get('end_date')}\n"
+                        summary += "\n"
+                
+                if completed_meds:
+                    summary += f"✔️ **Completed Courses ({len(completed_meds)}):**\n\n"
+                    for i, med in enumerate(completed_meds, 1):
+                        summary += f"{i}. **{med.get('medication_name', 'Unknown')}** - {med.get('dosage', 'N/A')}\n"
+                        if med.get('start_date') and med.get('end_date'):
+                            summary += f"   - **Duration:** {med.get('start_date')} to {med.get('end_date')}\n"
+                        if med.get('notes'):
+                            summary += f"   - **Notes:** {med.get('notes')}\n"
+                        summary += "\n"
+                
+                summary += "\n⚠️ **Important:** Always verify your current medications with your healthcare provider before making any changes."
+                
+                return summary
+            else:
+                return f"❌ Error retrieving your medications: {med_data.get('message', 'Unknown error')}"
+        else:
+            return f"❌ Error accessing medication database (Status: {med_response.status_code})"
+            
+    except requests.exceptions.Timeout:
+        return "❌ Request timed out. Please try again."
+    except requests.exceptions.ConnectionError:
+        return "❌ Cannot connect to medication database. Please check your connection."
+    except Exception as e:
+        return f"❌ Error retrieving your medications. Please try again later."
+
+
+@tool
+def check_my_medication(medication_name: str) -> str:
+    """
+    Check if YOU are currently taking a specific medication.
+    
+    This tool checks your personal medication list to see if you're taking
+    a particular medication. No patient ID needed - uses your authenticated session.
+    
+    Args:
+        medication_name: Name of the medication to check (e.g., "Metformin", "Lisinopril")
+        
+    Returns:
+        Information about whether you're taking this medication and details if found
+    """
+    try:
+        medications_result = get_my_medications()
+        
+        if "❌" in medications_result:
+            return medications_result
+        
+        if "No medications found" in medications_result:
+            return f"📋 You are not currently taking {medication_name}.\n\nYou have no medications recorded in the system."
+        
+        search_term = medication_name.lower()
+        
+        if search_term in medications_result.lower():
+            lines = medications_result.split('\n')
+            result_lines = []
+            found = False
+            capture = False
+            
+            for i, line in enumerate(lines):
+                if search_term in line.lower() and '**' in line:
+                    found = True
+                    capture = True
+                    result_lines.append(f"✅ **Yes, you are taking {medication_name}**\n")
+                
+                if capture:
+                    result_lines.append(line)
+                    if line.strip() == '' and len(result_lines) > 5:
+                        break
+            
+            if found:
+                return '\n'.join(result_lines)
+        
+        return f"📋 **No, you are not currently taking {medication_name}.**\n\nThis medication is not in your active medication list."
+        
+    except Exception as e:
+        return f"❌ Error checking medication. Please try again later."
+
+
+# =============================================================================
+# APPOINTMENT MANAGEMENT TOOLS
+# =============================================================================
+
+@tool
+def get_appointments(
+    patient_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> str:
+    """
+    Retrieve patient appointments with optional filters.
+    
+    Args:
+        patient_id: Filter by patient UUID (optional, uses current user if not provided)
+        provider_id: Filter by provider UUID
+        status: Filter by status (Scheduled, Confirmed, Cancelled, Completed, No-Show)
+        start_date: Filter from this date (YYYY-MM-DD)
+        end_date: Filter until this date (YYYY-MM-DD)
+    
+    Returns:
+        JSON string with appointments list
+    """
+    try:
+        # If no patient_id provided, use current user
+        if not patient_id:
+            patient_id = get_patient_id_for_current_user()
+            if not patient_id:
+                return json.dumps({
+                    'error': 'Authentication required to view appointments'
+                }, indent=2)
+        
+        params = {'action': 'get_appointments', 'patient_id': patient_id}
+        
+        if provider_id:
+            params['provider_id'] = provider_id
+        if status:
+            params['status'] = status
+        if start_date:
+            params['start_date'] = start_date
+        if end_date:
+            params['end_date'] = end_date
+        
+        lambda_client = boto3.client('lambda', region_name='us-east-1')
+        function_name = os.environ.get(
+            'APPOINTMENT_LAMBDA_FUNCTION_NAME',
+            'MihcStack-GatewayLambda679C3A36-lWEbMl7wejem'
+        )
+        
+        response = lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType='RequestResponse',
+            Payload=json.dumps(params)
+        )
+        
+        result = json.loads(response['Payload'].read())
+        
+        if result.get('statusCode') == 200:
+            body = json.loads(result.get('body', '{}'))
+            return json.dumps(body, indent=2)
+        else:
+            return json.dumps({
+                'error': 'Failed to retrieve appointments',
+                'details': result
+            }, indent=2)
+            
+    except Exception as e:
+        return json.dumps({'error': str(e)}, indent=2)
+
+
+@tool
+def create_appointment(
+    patient_id: str,
+    provider_id: str,
+    appointment_date: str,
+    created_by: str,
+    facility_id: Optional[str] = None,
+    duration_minutes: int = 30,
+    appointment_type: Optional[str] = None,
+    reason_for_visit: Optional[str] = None,
+    notes: Optional[str] = None
+) -> str:
+    """
+    Create a new appointment.
+    
+    Args:
+        patient_id: Patient UUID
+        provider_id: Provider UUID
+        appointment_date: Date and time (ISO 8601 format)
+        created_by: UUID of user creating appointment
+        facility_id: Facility UUID (optional)
+        duration_minutes: Duration in minutes
+        appointment_type: Type (Consultation, Follow-up, etc.)
+        reason_for_visit: Reason for visit
+        notes: Additional notes
+    
+    Returns:
+        JSON string with created appointment details
+    """
+    try:
+        params = {
+            'action': 'create_appointment',
+            'patient_id': patient_id,
+            'provider_id': provider_id,
+            'appointment_date': appointment_date,
+            'created_by': created_by,
+            'duration_minutes': duration_minutes
+        }
+        
+        if facility_id:
+            params['facility_id'] = facility_id
+        if appointment_type:
+            params['appointment_type'] = appointment_type
+        if reason_for_visit:
+            params['reason_for_visit'] = reason_for_visit
+        if notes:
+            params['notes'] = notes
+        
+        lambda_client = boto3.client('lambda', region_name='us-east-1')
+        function_name = os.environ.get(
+            'APPOINTMENT_LAMBDA_FUNCTION_NAME',
+            'MihcStack-GatewayLambda679C3A36-lWEbMl7wejem'
+        )
+        
+        response = lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType='RequestResponse',
+            Payload=json.dumps(params)
+        )
+        
+        result = json.loads(response['Payload'].read())
+        
+        if result.get('statusCode') == 200:
+            body = json.loads(result.get('body', '{}'))
+            return json.dumps(body, indent=2)
+        else:
+            return json.dumps({
+                'error': 'Failed to create appointment',
+                'details': result
+            }, indent=2)
+            
+    except Exception as e:
+        return json.dumps({'error': str(e)}, indent=2)

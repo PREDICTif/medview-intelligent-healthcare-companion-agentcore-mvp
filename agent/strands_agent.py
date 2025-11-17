@@ -7,12 +7,72 @@ from typing import Generator, Union, Any
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 # from bedrock_agentcore.context import RequestContext  # May not be available in all environments
 from strands.models import BedrockModel
-from tools import web_search, diabetes_specialist_tool, amd_specialist_tool
-from prompts import AGENT_SYSTEM_PROMPT
-from patient_tools import lookup_patient_record, get_diabetes_patients_list, search_patients_by_name, get_patient_medication_list, get_appointments, create_appointment
+from tools import (
+    web_search,
+    diabetes_specialist_tool,
+    amd_specialist_tool,
+    get_my_medications,
+    check_my_medication,
+    get_appointments,
+    create_appointment
+)
 
 # Import memory components
 from bedrock_agentcore.memory import MemoryClient
+
+# =============================================================================
+# SYSTEM PROMPT - Optimized for Claude 3.7 Sonnet
+# =============================================================================
+
+SYSTEM_PROMPT = """You are a medical assistant specializing in diabetes and eye care (AMD). Answer questions directly and concisely.
+
+## Your Tools
+
+**Specialist Consultations:**
+- `diabetes_specialist_tool` - For ALL diabetes questions (symptoms, treatment, diet, monitoring, complications)
+- `amd_specialist_tool` - For ALL vision/AMD questions (symptoms, treatment, prevention, monitoring)
+
+**Personal Health (Privacy-Safe):**
+- `get_my_medications` - Show YOUR medications (uses auth automatically, NO patient ID needed)
+- `check_my_medication` - Check if YOU take specific medication (NO patient ID needed)
+
+**Appointments:**
+- `get_appointments` - View/list YOUR appointments (with filters)
+- `create_appointment` - Schedule new appointments
+
+**Research:**
+- `web_search` - Only when specialist tools lack info or current research needed
+
+## Critical Rules
+
+**Personal Health Queries:**
+When user asks about THEIR health data:
+- "my medications", "what am I taking", "am I on X" → USE `get_my_medications` or `check_my_medication`
+- "my appointments", "show appointments" → USE `get_appointments`
+- ✅ These tools use authentication automatically
+- ❌ NEVER ask for patient ID, MRN, or any identifier
+
+**Tool Priority:**
+1. Diabetes questions → `diabetes_specialist_tool` FIRST
+2. Vision/AMD questions → `amd_specialist_tool` FIRST
+3. Personal health data → `get_my_medications`, `check_my_medication`, `get_appointments`
+4. Web search → ONLY if specialist tools insufficient
+
+**Response Quality:**
+- Answer the question directly first
+- Use plain language, be concise
+- Filter out ALL technical data (JSON, UUIDs, tool IDs, objects)
+- Output ONLY clean, human-readable text
+- Always end with: "This information is for educational purposes only. Consult qualified healthcare providers for personalized medical advice."
+
+**What NOT to include:**
+- ❌ No JSON objects or {curly braces} with data
+- ❌ No toolUseId, event_loop_cycle, or agent objects
+- ❌ No repeating the user's question
+- ❌ No introductory phrases like "Based on the consultation..."
+- ❌ No patient IDs or MRNs in responses
+
+Answer only the current question. Be helpful, accurate, and concise."""
 
 # Set environment variable to bypass tool consent
 os.environ["BYPASS_TOOL_CONSENT"] = "true"
@@ -96,11 +156,11 @@ def get_session_id_from_context(context) -> str:
 
 def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> Agent:
     """Create agent with AgentCore Memory session manager"""
-    model_id = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    model_id = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
     model = BedrockModel(
         model_id=model_id,
         max_tokens=4096,
-        temperature=0.1,
+        temperature=0.1,  # Low temperature for consistent medical information
     )
     
     # Configure AgentCore Memory session manager if available
@@ -126,22 +186,22 @@ def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> 
             print(f"Memory configuration failed: {e}")
             session_manager = None
     
-    # Create agent with patient database tools, appointment tools, and session manager
+    # Create agent with personal health tools and session manager
     agent = Agent(
         model=model,
         tools=[
+            # Specialist consultations
             diabetes_specialist_tool, 
             amd_specialist_tool, 
             web_search,
-            lookup_patient_record,           # Patient database lookup
-            get_diabetes_patients_list,      # List diabetes patients  
-            search_patients_by_name,         # Search patients by name
-            get_patient_medication_list,     # Get patient medications
-            get_appointments,                # Get appointments
-            create_appointment,              # Create appointment
+            # Personal health (privacy-safe - no patient ID needed)
+            get_my_medications,
+            check_my_medication,
+            get_appointments,
+            create_appointment,
         ],
-        system_prompt=AGENT_SYSTEM_PROMPT,
-        session_manager=session_manager  # Pass session manager to agent
+        system_prompt=SYSTEM_PROMPT,  # Using inline optimized prompt
+        session_manager=session_manager
     )
     
     return agent
@@ -149,19 +209,25 @@ def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> 
 @app.entrypoint
 async def strands_agent_bedrock(payload, context):
     """
-    Medical Assistant Agent with Patient Database Integration
+    Medical Assistant Agent - Patient-Facing
     
     Features:
     - Diabetes and AMD specialist consultations
     - Web search for latest medical information  
-    - Patient database lookup and search
+    - Personal health data (medications, appointments)
     - Memory integration for conversation persistence
     - Streaming response support
+    - Privacy-first design (no patient ID exposure)
     """
     # Initialize memory and agent for this request
     memory_id = get_memory_id()
     actor_id = extract_user_id_from_context(context)
     session_id = get_session_id_from_context(context)
+    
+    # Set user context in environment for tools to access
+    os.environ['AGENTCORE_USER_ID'] = actor_id
+    os.environ['AGENTCORE_SESSION_ID'] = session_id
+    print(f"✅ Set user context - User ID: {actor_id[:8]}..., Session: {session_id[:20]}...")
     
     # Create agent with memory configuration and patient database tools
     agent = create_agent_with_memory(memory_id, actor_id, session_id)
