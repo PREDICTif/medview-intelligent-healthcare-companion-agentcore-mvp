@@ -295,12 +295,14 @@ export class AgentCoreInfraStack extends cdk.Stack {
               'echo Building Docker image...',
               'docker build --platform linux/arm64 -t strands_agent:latest .',
               `docker tag strands_agent:latest ${agentRepository.repositoryUri}:latest`,
+              `docker tag strands_agent:latest ${agentRepository.repositoryUri}:v3`,
             ],
           },
           post_build: {
             commands: [
               'echo Pushing Docker image to ECR...',
               `docker push ${agentRepository.repositoryUri}:latest`,
+              `docker push ${agentRepository.repositoryUri}:v3`,
               'echo Build completed successfully',
             ],
           },
