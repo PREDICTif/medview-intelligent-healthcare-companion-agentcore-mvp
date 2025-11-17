@@ -3,14 +3,45 @@ import boto3
 import logging
 import os
 from typing import Dict, Any
+import re
 
-# Configure logging
+# Configure logging - NEVER log PHI!
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Initialize AWS clients
 secrets_client = boto3.client('secretsmanager')
 rds_data_client = boto3.client('rds-data')
+
+# PHI-safe logging helper
+def sanitize_for_logging(data: Any) -> str:
+    """
+    Sanitize data for logging by removing PHI.
+    HIPAA Compliance: Never log patient names, DOB, SSN, addresses, phone numbers, etc.
+    """
+    if isinstance(data, dict):
+        # Remove all PHI fields
+        phi_fields = {
+            'first_name', 'last_name', 'middle_name', 'date_of_birth', 'dob',
+            'phone_primary', 'phone_secondary', 'phone', 'email',
+            'address_line1', 'address_line2', 'address', 'city', 'state', 'zip_code',
+            'emergency_contact_name', 'emergency_contact_phone',
+            'insurance_policy_number', 'insurance_group_number',
+            'medical_record_number', 'mrn', 'ssn', 'social_security_number'
+        }
+        
+        safe_data = {}
+        for key, value in data.items():
+            if key.lower() in phi_fields:
+                safe_data[key] = '[REDACTED]'
+            elif key in ['patient_id', 'medication_id', 'provider_id']:
+                # Keep IDs but truncate for privacy
+                safe_data[key] = f"{str(value)[:8]}..." if value else None
+            else:
+                safe_data[key] = value
+        return json.dumps(safe_data)
+    return "[DATA]"
+
 
 def get_database_credentials():
     """Retrieve database credentials from AWS Secrets Manager."""
@@ -23,373 +54,38 @@ def get_database_credentials():
         secret = json.loads(response['SecretValue'])
         return secret
     except Exception as e:
-        logger.error(f"Error retrieving database credentials: {str(e)}")
+        # Don't log the exception details as they might contain sensitive info
+        logger.error("Error retrieving database credentials")
         raise
 
 
-
-def list_tables():
-    """List all tables in the database."""
-    try:
-        db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
-        secret_arn = os.environ.get('DB_SECRET_ARN')
-        database_name = os.environ.get('DB_NAME', 'medical_records')
-        
-        if not db_cluster_arn or not secret_arn:
-            return {
-                'status': 'error',
-                'message': 'Missing required environment variables'
-            }
-        
-        # Query to list all tables
-        response = rds_data_client.execute_statement(
-            resourceArn=db_cluster_arn,
-            secretArn=secret_arn,
-            database=database_name,
-            sql="SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
-        )
-        
-        # Parse the results
-        tables = []
-        if 'records' in response:
-            for record in response['records']:
-                if record and len(record) > 0:
-                    table_name = record[0].get('stringValue', 'unknown')
-                    tables.append(table_name)
-        
-        return {
-            'status': 'success',
-            'message': f'Found {len(tables)} tables in database "{database_name}"',
-            'database': database_name,
-            'tables': tables,
-            'count': len(tables)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error listing tables: {str(e)}")
-        return {
-            'status': 'error',
-            'message': f'Error listing tables: {str(e)}',
-            'error_type': type(e).__name__
-        }
+# REMOVED: list_tables() - Admin/debug function not needed for patient-facing app
 
 
+# REMOVED: get_patients() - Admin function not needed for patient-facing app
+# REMOVED: get_patient_by_id() - Admin function not needed for patient-facing app
 
-def get_patients():
-    """Retrieve all patients from the database."""
-    try:
-        db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
-        secret_arn = os.environ.get('DB_SECRET_ARN')
-        database_name = os.environ.get('DB_NAME', 'medical_records')
-        
-        if not db_cluster_arn or not secret_arn:
-            return {
-                'status': 'error',
-                'message': 'Missing required environment variables'
-            }
-        
-        # Query to get all patients with correct field names
-        response = rds_data_client.execute_statement(
-            resourceArn=db_cluster_arn,
-            secretArn=secret_arn,
-            database=database_name,
-            sql="SELECT patient_id, medical_record_number, first_name, last_name, middle_name, date_of_birth, gender, phone_primary, email, city, state FROM patients WHERE active = true ORDER BY last_name, first_name"
-        )
-        
-        # Parse the results
-        patients = []
-        if 'records' in response:
-            for record in response['records']:
-                patient = {}
-                fields = ['patient_id', 'medical_record_number', 'first_name', 'last_name', 'middle_name', 'date_of_birth', 'gender', 'phone_primary', 'email', 'city', 'state']
-                for i, field in enumerate(fields):
-                    if i < len(record):
-                        value = record[i]
-                        if 'stringValue' in value:
-                            patient[field] = value['stringValue']
-                        elif 'longValue' in value:
-                            patient[field] = value['longValue']
-                        elif 'isNull' in value:
-                            patient[field] = None
-                        else:
-                            patient[field] = str(value)
-                patients.append(patient)
-        
-        return {
-            'status': 'success',
-            'message': f'Retrieved {len(patients)} patients',
-            'patients': patients,
-            'count': len(patients)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error retrieving patients: {str(e)}")
-        return {
-            'status': 'error',
-            'message': f'Error retrieving patients: {str(e)}',
-            'error_type': type(e).__name__
-        }
 
-def get_patient_by_id(patient_id=None, medical_record_number=None):
-    """Retrieve a specific patient by patient_id or medical_record_number."""
-    try:
-        db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
-        secret_arn = os.environ.get('DB_SECRET_ARN')
-        database_name = os.environ.get('DB_NAME', 'medical_records')
-        
-        if not db_cluster_arn or not secret_arn:
-            return {
-                'status': 'error',
-                'message': 'Missing required environment variables'
-            }
-        
-        if not patient_id and not medical_record_number:
-            return {
-                'status': 'error',
-                'message': 'Either patient_id or medical_record_number is required'
-            }
-        
-        # Build query based on provided identifier
-        if patient_id:
-            sql_query = """
-                SELECT patient_id, medical_record_number, first_name, last_name, middle_name, 
-                       date_of_birth, gender, phone_primary, phone_secondary, email,
-                       address_line1, address_line2, city, state, zip_code, country,
-                       emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
-                       insurance_provider, insurance_policy_number, insurance_group_number,
-                       active, created_at, updated_at
-                FROM patients 
-                WHERE patient_id = :patient_id::uuid AND active = true
-            """
-            parameters = [{'name': 'patient_id', 'value': {'stringValue': str(patient_id)}}]
-        else:
-            sql_query = """
-                SELECT patient_id, medical_record_number, first_name, last_name, middle_name, 
-                       date_of_birth, gender, phone_primary, phone_secondary, email,
-                       address_line1, address_line2, city, state, zip_code, country,
-                       emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
-                       insurance_provider, insurance_policy_number, insurance_group_number,
-                       active, created_at, updated_at
-                FROM patients 
-                WHERE medical_record_number = :medical_record_number AND active = true
-            """
-            parameters = [{'name': 'medical_record_number', 'value': {'stringValue': medical_record_number}}]
-        
-        # Execute query
-        response = rds_data_client.execute_statement(
-            resourceArn=db_cluster_arn,
-            secretArn=secret_arn,
-            database=database_name,
-            sql=sql_query,
-            parameters=parameters
-        )
-        
-        # Parse the results
-        if 'records' in response and len(response['records']) > 0:
-            record = response['records'][0]
-            patient = {}
-            fields = [
-                'patient_id', 'medical_record_number', 'first_name', 'last_name', 'middle_name',
-                'date_of_birth', 'gender', 'phone_primary', 'phone_secondary', 'email',
-                'address_line1', 'address_line2', 'city', 'state', 'zip_code', 'country',
-                'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
-                'insurance_provider', 'insurance_policy_number', 'insurance_group_number',
-                'active', 'created_at', 'updated_at'
-            ]
-            
-            for i, field in enumerate(fields):
-                if i < len(record):
-                    value = record[i]
-                    if 'stringValue' in value:
-                        patient[field] = value['stringValue']
-                    elif 'longValue' in value:
-                        patient[field] = value['longValue']
-                    elif 'booleanValue' in value:
-                        patient[field] = value['booleanValue']
-                    elif 'isNull' in value:
-                        patient[field] = None
-                    else:
-                        patient[field] = str(value)
-            
-            return {
-                'status': 'success',
-                'message': 'Patient retrieved successfully',
-                'patient': patient
-            }
-        else:
-            return {
-                'status': 'not_found',
-                'message': 'Patient not found',
-                'patient': None
-            }
-        
-    except Exception as e:
-        logger.error(f"Error retrieving patient: {str(e)}")
-        return {
-            'status': 'error',
-            'message': f'Error retrieving patient: {str(e)}',
-            'error_type': type(e).__name__
-        }
+# REMOVED: create_patient() - Admin function not needed for patient-facing app
+# Patient registration should be handled through a separate secure registration flow
 
-def create_patient(patient_data: Dict[str, Any]):
-    """Create a new patient record in the database."""
-    try:
-        db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
-        secret_arn = os.environ.get('DB_SECRET_ARN')
-        database_name = os.environ.get('DB_NAME', 'medical_records')
-        
-        if not db_cluster_arn or not secret_arn:
-            return {
-                'status': 'error',
-                'message': 'Missing required environment variables'
-            }
-        
-        # Required fields validation
-        required_fields = ['patient_id', 'medical_record_number', 'first_name', 'last_name', 'date_of_birth', 'created_by']
-        for field in required_fields:
-            if not patient_data.get(field):
-                return {
-                    'status': 'error',
-                    'message': f'Missing required field: {field}'
-                }
-        
-        # Build SQL insert statement with parameters
-        sql_query = """
-            INSERT INTO patients (
-                patient_id, medical_record_number, first_name, last_name, middle_name,
-                date_of_birth, gender, height_feet, height_inches, weight_lbs,
-                phone_primary, phone_secondary, email,
-                address_line1, address_line2, city, state, zip_code, country,
-                emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
-                insurance_provider, insurance_policy_number, insurance_group_number,
-                created_by
-            ) VALUES (
-                :patient_id::uuid, :medical_record_number, :first_name, :last_name, :middle_name,
-                :date_of_birth::date, :gender, :height_feet, :height_inches, :weight_lbs,
-                :phone_primary, :phone_secondary, :email,
-                :address_line1, :address_line2, :city, :state, :zip_code, :country,
-                :emergency_contact_name, :emergency_contact_phone, :emergency_contact_relationship,
-                :insurance_provider, :insurance_policy_number, :insurance_group_number,
-                :created_by::uuid
-            )
-            RETURNING patient_id, medical_record_number, first_name, last_name, created_at
-        """
-        
-        # Build parameters list
-        parameters = []
-        field_mappings = [
-            'patient_id',
-            'medical_record_number', 'first_name', 'last_name', 'middle_name',
-            'date_of_birth', 'gender', 'height_feet', 'height_inches', 'weight_lbs',
-            'phone_primary', 'phone_secondary', 'email',
-            'address_line1', 'address_line2', 'city', 'state', 'zip_code', 'country',
-            'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
-            'insurance_provider', 'insurance_policy_number', 'insurance_group_number',
-            'created_by'
-        ]
-        
-        for field in field_mappings:
-            value = patient_data.get(field)
-            if value is not None and value != '':
-                # Use longValue for integer fields (height_feet, height_inches)
-                if field in ['height_feet', 'height_inches']:
-                    parameters.append({
-                        'name': field,
-                        'value': {'longValue': int(value)}
-                    })
-                # Use doubleValue for decimal fields (weight_lbs)
-                elif field == 'weight_lbs':
-                    parameters.append({
-                        'name': field,
-                        'value': {'doubleValue': float(value)}
-                    })
-                else:
-                    parameters.append({
-                        'name': field,
-                        'value': {'stringValue': str(value)}
-                    })
-            else:
-                parameters.append({
-                    'name': field,
-                    'value': {'isNull': True}
-                })
-        
-        # Execute insert
-        response = rds_data_client.execute_statement(
-            resourceArn=db_cluster_arn,
-            secretArn=secret_arn,
-            database=database_name,
-            sql=sql_query,
-            parameters=parameters
-        )
-        
-        # Parse the returned patient data
-        if 'records' in response and len(response['records']) > 0:
-            record = response['records'][0]
-            patient = {
-                'patient_id': record[0].get('stringValue'),
-                'medical_record_number': record[1].get('stringValue'),
-                'first_name': record[2].get('stringValue'),
-                'last_name': record[3].get('stringValue'),
-                'created_at': record[4].get('stringValue')
-            }
-            
-            return {
-                'status': 'success',
-                'message': 'Patient created successfully',
-                'patient': patient
-            }
-        else:
-            return {
-                'status': 'error',
-                'message': 'Failed to create patient - no data returned'
-            }
-        
-    except Exception as e:
-        logger.error(f"Error creating patient: {str(e)}")
-        
-        # Check for duplicate patient_id (PRIMARY KEY violation)
-        if 'duplicate key value violates unique constraint "patients_pkey"' in str(e):
-            return {
-                'status': 'error',
-                'message': 'You already have a patient record. Each user can only register once.',
-                'error_type': 'DuplicatePatient'
-            }
-        
-        # Check for duplicate medical_record_number
-        if 'duplicate key value violates unique constraint' in str(e) and 'medical_record_number' in str(e):
-            return {
-                'status': 'error',
-                'message': 'This Medical Record Number is already in use. Please use a unique MRN.',
-                'error_type': 'DuplicateMRN'
-            }
-        
-        return {
-            'status': 'error',
-            'message': f'Error creating patient: {str(e)}',
-            'error_type': type(e).__name__
-        }
 
 def test_database_connection():
     """Test database connectivity using RDS Data API."""
     try:
-        # Get database info from environment
         db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
         secret_arn = os.environ.get('DB_SECRET_ARN')
         database_name = os.environ.get('DB_NAME', 'medical_records')
         
         if not db_cluster_arn:
-            # If no cluster ARN, try basic secret retrieval test
             credentials = get_database_credentials()
             return {
                 'status': 'partial_success',
                 'message': 'Successfully retrieved database credentials',
                 'has_credentials': True,
-                'username': credentials.get('username', 'unknown'),
                 'note': 'DB_CLUSTER_ARN not set - cannot test actual connection'
             }
         
-        # Test actual database connection using RDS Data API
         response = rds_data_client.execute_statement(
             resourceArn=db_cluster_arn,
             secretArn=secret_arn,
@@ -400,17 +96,17 @@ def test_database_connection():
         return {
             'status': 'success',
             'message': 'Database connection successful',
-            'query_result': response.get('records', []),
             'database': database_name
         }
         
     except Exception as e:
-        logger.error(f"Database connection test failed: {str(e)}")
+        logger.error(f"Database connection test failed: {type(e).__name__}")
         return {
             'status': 'error',
-            'message': f'Database connection failed: {str(e)}',
+            'message': 'Database connection failed',
             'error_type': type(e).__name__
         }
+
 
 def get_patient_medications(patient_id: str):
     """Retrieve all medications for a specific patient."""
@@ -425,27 +121,15 @@ def get_patient_medications(patient_id: str):
                 'message': 'Missing required environment variables'
             }
         
-        # Query to get all medications for the patient
+        # Log access without PHI
+        logger.info("Retrieving patient medications")
+        
         sql_query = """
             SELECT 
-                m.medication_id,
-                m.patient_id,
-                m.medication_name,
-                m.generic_name,
-                m.ndc_code,
-                m.dosage,
-                m.frequency,
-                m.route,
-                m.quantity_prescribed,
-                m.refills_remaining,
-                m.prescription_date,
-                m.start_date,
-                m.end_date,
-                m.medication_status,
-                m.discontinuation_reason,
-                m.instructions,
-                m.notes,
-                m.created_at,
+                m.medication_id, m.patient_id, m.medication_name, m.generic_name, m.ndc_code,
+                m.dosage, m.frequency, m.route, m.quantity_prescribed, m.refills_remaining,
+                m.prescription_date, m.start_date, m.end_date, m.medication_status,
+                m.discontinuation_reason, m.instructions, m.notes, m.created_at,
                 p.first_name || ' ' || p.last_name as prescribed_by_name
             FROM medications m
             LEFT JOIN healthcare_providers p ON m.prescribed_by = p.provider_id
@@ -465,12 +149,9 @@ def get_patient_medications(patient_id: str):
             secretArn=secret_arn,
             database=database_name,
             sql=sql_query,
-            parameters=[
-                {'name': 'patient_id', 'value': {'stringValue': patient_id}}
-            ]
+            parameters=[{'name': 'patient_id', 'value': {'stringValue': patient_id}}]
         )
         
-        # Parse the results
         medications = []
         if 'records' in response and response['records']:
             fields = [
@@ -497,6 +178,8 @@ def get_patient_medications(patient_id: str):
                             medication[field] = str(value)
                 medications.append(medication)
         
+        logger.info(f"Retrieved {len(medications)} medications")
+        
         return {
             'status': 'success',
             'message': f'Found {len(medications)} medication(s)',
@@ -505,30 +188,41 @@ def get_patient_medications(patient_id: str):
         }
         
     except Exception as e:
-        logger.error(f"Error retrieving medications: {str(e)}")
+        logger.error(f"Error retrieving medications: {type(e).__name__}")
         return {
             'status': 'error',
-            'message': f'Error retrieving medications: {str(e)}',
+            'message': 'Error retrieving medications',
             'error_type': type(e).__name__
         }
 
+
 def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     """
-    Lambda function for database operations with connectivity testing
+    Patient-Facing Database Handler with PHI-Safe Logging
+    
+    Available Actions:
+    - health_check: Check Lambda function health
+    - test_db_connection: Test database connectivity
+    - get_patient_medications: Get medications for authenticated patient
+    
+    Security:
+    - PHI-safe logging (no patient data in logs)
+    - Patient-facing only (admin functions removed)
+    - Requires patient_id from authenticated context
     """
     
     try:
-        logger.info(f"Received event: {json.dumps(event)}")
+        # Log request without PHI
+        logger.info(f"Request received - action: {event.get('action', 'unknown')}")
+        
         # Parse body for Lambda Function URL requests
         if event.get('body'):
             try:
                 body_data = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-                # Merge body data into event for easier access
                 event.update(body_data)
             except (json.JSONDecodeError, TypeError):
                 logger.warning("Could not parse request body")
         
-        # Add CORS headers
         headers = {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
@@ -536,7 +230,6 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
             'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
         }
         
-        # Handle preflight OPTIONS requests
         if event.get('httpMethod') == 'OPTIONS':
             return {
                 'statusCode': 200,
@@ -544,7 +237,7 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'body': json.dumps({'message': 'CORS preflight'})
             }
         
-        # Database connectivity test
+        # Health check and database connection test
         if event.get('action') == 'test_db_connection':
             db_test_result = test_database_connection()
             return {
@@ -553,89 +246,7 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'body': json.dumps(db_test_result)
             }
         
-
-        
-        # Get patients list
-        if event.get('action') == 'get_patients':
-            patients_result = get_patients()
-            return {
-                'statusCode': 200 if patients_result['status'] != 'error' else 500,
-                'headers': headers,
-                'body': json.dumps(patients_result)
-            }
-        
-        # Get specific patient by ID
-        if event.get('action') == 'get_patient_by_id':
-            patient_id = event.get('patient_id')
-            medical_record_number = event.get('medical_record_number')
-            
-            # Also check in pathParameters for API Gateway integration
-            if not patient_id and not medical_record_number:
-                path_params = event.get('pathParameters', {})
-                if path_params:
-                    patient_id = path_params.get('patient_id') or path_params.get('id')
-                    medical_record_number = path_params.get('medical_record_number') or path_params.get('mrn')
-            
-            # Also check in queryStringParameters
-            if not patient_id and not medical_record_number:
-                query_params = event.get('queryStringParameters', {})
-                if query_params:
-                    patient_id = query_params.get('patient_id') or query_params.get('id')
-                    medical_record_number = query_params.get('medical_record_number') or query_params.get('mrn')
-            
-            patient_result = get_patient_by_id(patient_id=patient_id, medical_record_number=medical_record_number)
-            status_code = 200
-            if patient_result['status'] == 'error':
-                status_code = 500
-            elif patient_result['status'] == 'not_found':
-                status_code = 404
-            
-            return {
-                'statusCode': status_code,
-                'headers': headers,
-                'body': json.dumps(patient_result)
-            }
-        
-        # Create new patient
-        if event.get('action') == 'create_patient':
-            # Get patient data from event body
-            patient_data = event.get('patient_data', {})
-
-            # ADD THESE DEBUG LOGS:
-            logger.info(f"=== CREATE PATIENT DEBUG ===")
-            logger.info(f"patient_data keys: {list(patient_data.keys())}")
-            logger.info(f"patient_id value: {patient_data.get('patient_id')}")
-            logger.info(f"patient_id type: {type(patient_data.get('patient_id'))}")
-            logger.info(f"created_by value: {patient_data.get('created_by')}")
-            logger.info(f"medical_record_number: {patient_data.get('medical_record_number')}")  
-            
-            # Also check in body for API Gateway integration
-            if not patient_data and event.get('body'):
-                try:
-                    body_data = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-                    patient_data = body_data.get('patient_data', body_data)
-                except json.JSONDecodeError:
-                    return {
-                        'statusCode': 400,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'status': 'error',
-                            'message': 'Invalid JSON in request body'
-                        })
-                    }
-            
-            create_result = create_patient(patient_data)
-            status_code = 201 if create_result['status'] == 'success' else 500
-            
-            return {
-                'statusCode': status_code,
-                'headers': headers,
-                'body': json.dumps(create_result)
-            }
-        
-
-        
-        # Get patient medications
+        # Patient-facing: Get medications for authenticated user
         if event.get('action') == 'get_patient_medications':
             patient_id = event.get('patient_id')
             
@@ -656,54 +267,38 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'body': json.dumps(medications_result)
             }
         
-        # List all tables in the database
-        if event.get('action') == 'list_tables':
-            tables_result = list_tables()
-            return {
-                'statusCode': 200 if tables_result['status'] != 'error' else 500,
-                'headers': headers,
-                'body': json.dumps(tables_result)
-            }
-        
-        # Environment info check
         if event.get('action') == 'health_check':
             return {
                 'statusCode': 200,
                 'headers': headers,
                 'body': json.dumps({
                     'message': 'Database handler is healthy',
-                    'environment': {
-                        'db_host': os.environ.get('DB_HOST', 'not_set'),
-                        'db_name': os.environ.get('DB_NAME', 'not_set'),
-                        'db_port': os.environ.get('DB_PORT', 'not_set'),
-                        'db_secret_arn': os.environ.get('DB_SECRET_ARN', 'not_set'),
-                        'db_cluster_arn': os.environ.get('DB_CLUSTER_ARN', 'not_set'),
-                        'has_secret': bool(os.environ.get('DB_SECRET_ARN')),
-                        'has_cluster_arn': bool(os.environ.get('DB_CLUSTER_ARN'))
-                    }
+                    'has_secret': bool(os.environ.get('DB_SECRET_ARN')),
+                    'has_cluster_arn': bool(os.environ.get('DB_CLUSTER_ARN'))
                 })
             }
         
-        # Default response for unhandled requests
         return {
             'statusCode': 200,
             'headers': headers,
             'body': json.dumps({
-                'message': 'Database handler ready',
-                'available_actions': ['health_check', 'test_db_connection', 'get_patients', 'get_patient_by_id', 'create_patient', 'get_patient_medications', 'list_tables'],
-                'event_keys': list(event.keys()),
-                'method': event.get('httpMethod', 'unknown'),
-                'resource': event.get('resource', 'unknown')
+                'message': 'Database handler ready - Patient-facing API',
+                'available_actions': [
+                    'health_check',
+                    'test_db_connection',
+                    'get_patient_medications'
+                ],
+                'note': 'This is a patient-facing API. Admin functions have been removed for security.'
             })
         }
         
     except Exception as e:
-        logger.error(f"Error in lambda_handler: {str(e)}")
+        logger.error(f"Error in lambda_handler: {type(e).__name__}")
         return {
             'statusCode': 500,
             'headers': {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
             },
-            'body': json.dumps({'error': str(e)})
+            'body': json.dumps({'error': 'Internal server error'})
         }
