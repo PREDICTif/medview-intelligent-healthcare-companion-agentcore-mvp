@@ -226,7 +226,7 @@ async function sendResponse(event, status, data, reason) {
       // Container configuration
       agentRuntimeArtifact: {
         containerConfiguration: {
-          containerUri: `${agentRepository.repositoryUri}:latest`,
+          containerUri: `${agentRepository.repositoryUri}:v3`,
         },
       },
 
@@ -249,9 +249,10 @@ async function sendResponse(event, status, data, reason) {
       // Environment variables (if needed)
       environmentVariables: {
         LOG_LEVEL: 'INFO',
-        IMAGE_VERSION: new Date().toISOString(),
+        IMAGE_VERSION: '2025-11-14T22:35:00Z',
         TAVILY_API_KEY: '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',
         AWS_DEFAULT_REGION: region,
+        FORCE_RESTART: 'v2',
       },
 
       tags: {

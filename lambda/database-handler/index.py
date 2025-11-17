@@ -412,6 +412,106 @@ def test_database_connection():
             'error_type': type(e).__name__
         }
 
+def get_patient_medications(patient_id: str):
+    """Retrieve all medications for a specific patient."""
+    try:
+        db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
+        secret_arn = os.environ.get('DB_SECRET_ARN')
+        database_name = os.environ.get('DB_NAME', 'medical_records')
+        
+        if not db_cluster_arn or not secret_arn:
+            return {
+                'status': 'error',
+                'message': 'Missing required environment variables'
+            }
+        
+        # Query to get all medications for the patient
+        sql_query = """
+            SELECT 
+                m.medication_id,
+                m.patient_id,
+                m.medication_name,
+                m.generic_name,
+                m.ndc_code,
+                m.dosage,
+                m.frequency,
+                m.route,
+                m.quantity_prescribed,
+                m.refills_remaining,
+                m.prescription_date,
+                m.start_date,
+                m.end_date,
+                m.medication_status,
+                m.discontinuation_reason,
+                m.instructions,
+                m.notes,
+                m.created_at,
+                p.first_name || ' ' || p.last_name as prescribed_by_name
+            FROM medications m
+            LEFT JOIN healthcare_providers p ON m.prescribed_by = p.provider_id
+            WHERE m.patient_id = :patient_id::uuid
+            ORDER BY 
+                CASE m.medication_status
+                    WHEN 'Active' THEN 1
+                    WHEN 'Discontinued' THEN 2
+                    WHEN 'Completed' THEN 3
+                    ELSE 4
+                END,
+                m.prescription_date DESC
+        """
+        
+        response = rds_data_client.execute_statement(
+            resourceArn=db_cluster_arn,
+            secretArn=secret_arn,
+            database=database_name,
+            sql=sql_query,
+            parameters=[
+                {'name': 'patient_id', 'value': {'stringValue': patient_id}}
+            ]
+        )
+        
+        # Parse the results
+        medications = []
+        if 'records' in response and response['records']:
+            fields = [
+                'medication_id', 'patient_id', 'medication_name', 'generic_name', 'ndc_code',
+                'dosage', 'frequency', 'route', 'quantity_prescribed', 'refills_remaining',
+                'prescription_date', 'start_date', 'end_date', 'medication_status',
+                'discontinuation_reason', 'instructions', 'notes', 'created_at', 'prescribed_by_name'
+            ]
+            
+            for record in response['records']:
+                medication = {}
+                for i, field in enumerate(fields):
+                    if i < len(record):
+                        value = record[i]
+                        if 'stringValue' in value:
+                            medication[field] = value['stringValue']
+                        elif 'longValue' in value:
+                            medication[field] = value['longValue']
+                        elif 'booleanValue' in value:
+                            medication[field] = value['booleanValue']
+                        elif 'isNull' in value:
+                            medication[field] = None
+                        else:
+                            medication[field] = str(value)
+                medications.append(medication)
+        
+        return {
+            'status': 'success',
+            'message': f'Found {len(medications)} medication(s)',
+            'medications': medications,
+            'count': len(medications)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving medications: {str(e)}")
+        return {
+            'status': 'error',
+            'message': f'Error retrieving medications: {str(e)}',
+            'error_type': type(e).__name__
+        }
+
 def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     """
     Lambda function for database operations with connectivity testing
@@ -535,6 +635,27 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
         
 
         
+        # Get patient medications
+        if event.get('action') == 'get_patient_medications':
+            patient_id = event.get('patient_id')
+            
+            if not patient_id:
+                return {
+                    'statusCode': 400,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'status': 'error',
+                        'message': 'Missing required parameter: patient_id'
+                    })
+                }
+            
+            medications_result = get_patient_medications(patient_id)
+            return {
+                'statusCode': 200 if medications_result['status'] != 'error' else 500,
+                'headers': headers,
+                'body': json.dumps(medications_result)
+            }
+        
         # List all tables in the database
         if event.get('action') == 'list_tables':
             tables_result = list_tables()
@@ -569,7 +690,7 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
             'headers': headers,
             'body': json.dumps({
                 'message': 'Database handler ready',
-                'available_actions': ['health_check', 'test_db_connection', 'get_patients', 'get_patient_by_id', 'create_patient', 'list_tables'],
+                'available_actions': ['health_check', 'test_db_connection', 'get_patients', 'get_patient_by_id', 'create_patient', 'get_patient_medications', 'list_tables'],
                 'event_keys': list(event.keys()),
                 'method': event.get('httpMethod', 'unknown'),
                 'resource': event.get('resource', 'unknown')

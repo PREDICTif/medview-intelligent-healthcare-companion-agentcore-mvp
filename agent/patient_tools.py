@@ -251,64 +251,139 @@ def search_patients_by_name(first_name: str = "", last_name: str = "") -> str:
 @tool
 def get_patient_medication_list(patient_identifier: str) -> str:
     """
-    Get the current medication list for a specific patient
+    Get the current medication list for a specific patient from the medications table
+    
+    This tool queries the medications table to retrieve all medications prescribed to a patient,
+    including active medications, discontinued medications, and completed courses.
     
     Args:
-        patient_identifier: Patient ID or Medical Record Number (MRN)
+        patient_identifier: Patient ID (UUID) or Medical Record Number (MRN) like 'MRN-2024-001001'
         
     Returns:
-        Patient's current medications and allergy information
+        Formatted list of patient's medications with details including:
+        - Medication name (brand and generic)
+        - Dosage and frequency
+        - Route of administration
+        - Prescription dates and refills
+        - Status (Active, Discontinued, Completed)
+        - Instructions and clinical notes
     """
     try:
+        # First, get the patient to verify they exist and get their UUID
+        patient_data = lookup_patient_record(patient_identifier)
+        
+        if "❌" in patient_data or "not found" in patient_data.lower():
+            return patient_data  # Return the error message
+        
+        # Extract patient UUID from the lookup result
+        # The lookup_patient_record returns formatted text, so we need to call the API directly
         lambda_url = get_lambda_url()
         if not lambda_url:
             return "❌ Patient database is not available. Lambda function not configured."
         
-        # Clean the Lambda URL and make action-based request
+        # Get patient UUID
         base_url = lambda_url.rstrip('/')
-        
-        payload = {
+        patient_payload = {
             "action": "get_patient_by_id",
             "medical_record_number": patient_identifier
         }
         
-        response = requests.post(base_url, json=payload, timeout=30)
+        patient_response = requests.post(base_url, json=patient_payload, timeout=30)
         
-        if response.status_code == 200:
-            patient_data = response.json()
+        if patient_response.status_code != 200:
+            return f"❌ Could not retrieve patient information (Status: {patient_response.status_code})"
+        
+        patient_info = patient_response.json()
+        if patient_info.get('status') != 'success' or not patient_info.get('patient'):
+            return f"❌ Patient not found: {patient_identifier}"
+        
+        patient = patient_info['patient']
+        patient_id = patient.get('patient_id')
+        patient_name = f"{patient.get('first_name', 'Unknown')} {patient.get('last_name', 'Unknown')}"
+        mrn = patient.get('medical_record_number', 'N/A')
+        
+        # Now query medications for this patient
+        medications_payload = {
+            "action": "get_patient_medications",
+            "patient_id": patient_id
+        }
+        
+        med_response = requests.post(base_url, json=medications_payload, timeout=30)
+        
+        if med_response.status_code == 200:
+            med_data = med_response.json()
             
-            if patient_data.get('status') == 'success' and patient_data.get('patient'):
-                patient = patient_data['patient']
+            if med_data.get('status') == 'success':
+                medications = med_data.get('medications', [])
                 
-                # Extract basic information
-                patient_name = f"{patient.get('first_name', 'Unknown')} {patient.get('last_name', 'Unknown')}"
-                mrn = patient.get('medical_record_number', 'N/A')
+                # Build formatted response
+                summary = f"💊 **Medication List for {patient_name} (MRN: {mrn})**\n\n"
                 
-                summary = f"💊 **Patient Information for {patient_name} (MRN: {mrn})**\n\n"
-                summary += f"**Basic Information:**\n"
-                summary += f"- Name: {patient_name}\n"
-                summary += f"- DOB: {patient.get('date_of_birth', 'N/A')}\n"
-                summary += f"- Gender: {patient.get('gender', 'N/A')}\n"
+                if not medications:
+                    summary += "📋 **No medications found in the system.**\n\n"
+                    summary += "This patient currently has no recorded medications in the database.\n"
+                    summary += "⚠️ Always verify with the patient if they are taking any medications, including over-the-counter drugs and supplements."
+                    return summary
                 
-                if patient.get('phone_primary'):
-                    summary += f"- Phone: {patient.get('phone_primary')}\n"
+                # Group medications by status
+                active_meds = [m for m in medications if m.get('medication_status') == 'Active']
+                discontinued_meds = [m for m in medications if m.get('medication_status') == 'Discontinued']
+                completed_meds = [m for m in medications if m.get('medication_status') == 'Completed']
                 
-                summary += f"\n**Medical Information:**\n"
-                summary += f"*Note: Detailed medication and allergy information will be available when medical history tables are implemented.*\n"
-                summary += f"*Current patient record contains basic demographic information only.*\n\n"
+                # Active Medications
+                if active_meds:
+                    summary += f"✅ **Active Medications ({len(active_meds)}):**\n\n"
+                    for i, med in enumerate(active_meds, 1):
+                        summary += f"{i}. **{med.get('medication_name', 'Unknown')}**"
+                        if med.get('generic_name'):
+                            summary += f" ({med.get('generic_name')})"
+                        summary += "\n"
+                        summary += f"   - Dosage: {med.get('dosage', 'N/A')}\n"
+                        summary += f"   - Frequency: {med.get('frequency', 'N/A')}\n"
+                        summary += f"   - Route: {med.get('route', 'N/A')}\n"
+                        if med.get('prescription_date'):
+                            summary += f"   - Prescribed: {med.get('prescription_date')}\n"
+                        if med.get('refills_remaining') is not None:
+                            summary += f"   - Refills Remaining: {med.get('refills_remaining')}\n"
+                        if med.get('instructions'):
+                            summary += f"   - Instructions: {med.get('instructions')}\n"
+                        if med.get('notes'):
+                            summary += f"   - Notes: {med.get('notes')}\n"
+                        summary += "\n"
                 
-                summary += "⚠️ **Important:** Always verify current medications with the patient and check for any recent changes before providing medical advice."
+                # Discontinued Medications
+                if discontinued_meds:
+                    summary += f"⏸️ **Discontinued Medications ({len(discontinued_meds)}):**\n\n"
+                    for i, med in enumerate(discontinued_meds, 1):
+                        summary += f"{i}. **{med.get('medication_name', 'Unknown')}**"
+                        if med.get('generic_name'):
+                            summary += f" ({med.get('generic_name')})"
+                        summary += "\n"
+                        summary += f"   - Dosage: {med.get('dosage', 'N/A')}\n"
+                        if med.get('discontinuation_reason'):
+                            summary += f"   - Reason: {med.get('discontinuation_reason')}\n"
+                        if med.get('end_date'):
+                            summary += f"   - Discontinued: {med.get('end_date')}\n"
+                        summary += "\n"
+                
+                # Completed Medications
+                if completed_meds:
+                    summary += f"✔️ **Completed Courses ({len(completed_meds)}):**\n\n"
+                    for i, med in enumerate(completed_meds, 1):
+                        summary += f"{i}. **{med.get('medication_name', 'Unknown')}** - {med.get('dosage', 'N/A')}\n"
+                        if med.get('start_date') and med.get('end_date'):
+                            summary += f"   - Duration: {med.get('start_date')} to {med.get('end_date')}\n"
+                        if med.get('notes'):
+                            summary += f"   - Notes: {med.get('notes')}\n"
+                        summary += "\n"
+                
+                summary += "\n⚠️ **Important:** Always verify current medications with the patient and check for any recent changes before providing medical advice."
                 
                 return summary
-            elif patient_data.get('status') == 'not_found':
-                return f"❌ No patient found with identifier: {patient_identifier}"
             else:
-                return f"❌ Error: {patient_data.get('message', 'Unknown error')}"
-                
-        elif response.status_code == 404:
-            return f"❌ No patient found with identifier: {patient_identifier}"
+                return f"❌ Error retrieving medications: {med_data.get('message', 'Unknown error')}"
         else:
-            return f"❌ Error accessing patient database (Status: {response.status_code})"
+            return f"❌ Error accessing medications database (Status: {med_response.status_code})"
             
     except requests.exceptions.Timeout:
         return "❌ Patient database request timed out. Please try again."
@@ -316,3 +391,148 @@ def get_patient_medication_list(patient_identifier: str) -> str:
         return "❌ Cannot connect to patient database. Please check system status."
     except Exception as e:
         return f"❌ Error retrieving patient medications: {str(e)}"
+
+
+# =============================================================================
+# APPOINTMENT MANAGEMENT TOOLS
+# =============================================================================
+
+@tool
+def get_appointments(
+    patient_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> str:
+    """
+    Retrieve patient appointments with optional filters.
+    
+    Args:
+        patient_id: Filter by patient UUID
+        provider_id: Filter by provider UUID
+        status: Filter by status (Scheduled, Confirmed, Cancelled, Completed, No-Show)
+        start_date: Filter from this date (YYYY-MM-DD)
+        end_date: Filter until this date (YYYY-MM-DD)
+    
+    Returns:
+        JSON string with appointments list
+    """
+    try:
+        params = {}
+        if patient_id:
+            params['patient_id'] = patient_id
+        if provider_id:
+            params['provider_id'] = provider_id
+        if status:
+            params['status'] = status
+        if start_date:
+            params['start_date'] = start_date
+        if end_date:
+            params['end_date'] = end_date
+        
+        payload = {
+            'action': 'get_appointments',
+            **params
+        }
+        
+        lambda_client = boto3.client('lambda', region_name='us-east-1')
+        function_name = os.environ.get(
+            'APPOINTMENT_LAMBDA_FUNCTION_NAME',
+            'MihcStack-GatewayLambda679C3A36-lWEbMl7wejem'
+        )
+        
+        response = lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType='RequestResponse',
+            Payload=json.dumps(payload)
+        )
+        
+        result = json.loads(response['Payload'].read())
+        
+        if result.get('statusCode') == 200:
+            body = json.loads(result.get('body', '{}'))
+            return json.dumps(body, indent=2)
+        else:
+            return json.dumps({
+                'error': 'Failed to retrieve appointments',
+                'details': result
+            }, indent=2)
+            
+    except Exception as e:
+        return json.dumps({'error': str(e)}, indent=2)
+
+
+@tool
+def create_appointment(
+    patient_id: str,
+    provider_id: str,
+    appointment_date: str,
+    created_by: str,
+    facility_id: Optional[str] = None,
+    duration_minutes: int = 30,
+    appointment_type: Optional[str] = None,
+    reason_for_visit: Optional[str] = None,
+    notes: Optional[str] = None
+) -> str:
+    """
+    Create a new appointment.
+    
+    Args:
+        patient_id: Patient UUID
+        provider_id: Provider UUID
+        appointment_date: Date and time (ISO 8601 format)
+        created_by: UUID of user creating appointment
+        facility_id: Facility UUID (optional)
+        duration_minutes: Duration in minutes
+        appointment_type: Type (Consultation, Follow-up, etc.)
+        reason_for_visit: Reason for visit
+        notes: Additional notes
+    
+    Returns:
+        JSON string with created appointment details
+    """
+    try:
+        params = {
+            'action': 'create_appointment',
+            'patient_id': patient_id,
+            'provider_id': provider_id,
+            'appointment_date': appointment_date,
+            'created_by': created_by,
+            'duration_minutes': duration_minutes
+        }
+        
+        if facility_id:
+            params['facility_id'] = facility_id
+        if appointment_type:
+            params['appointment_type'] = appointment_type
+        if reason_for_visit:
+            params['reason_for_visit'] = reason_for_visit
+        if notes:
+            params['notes'] = notes
+        
+        lambda_client = boto3.client('lambda', region_name='us-east-1')
+        function_name = os.environ.get(
+            'APPOINTMENT_LAMBDA_FUNCTION_NAME',
+            'MihcStack-GatewayLambda679C3A36-lWEbMl7wejem'
+        )
+        
+        response = lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType='RequestResponse',
+            Payload=json.dumps(params)
+        )
+        
+        result = json.loads(response['Payload'].read())
+        
+        if result.get('statusCode') == 200:
+            body = json.loads(result.get('body', '{}'))
+            return json.dumps(body, indent=2)
+        else:
+            return json.dumps({
+                'error': 'Failed to create appointment',
+                'details': result
+            }, indent=2)
+            
+    except Exception as e:
+        return json.dumps({'error': str(e)}, indent=2)

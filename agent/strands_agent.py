@@ -9,7 +9,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands.models import BedrockModel
 from tools import web_search, diabetes_specialist_tool, amd_specialist_tool
 from prompts import AGENT_SYSTEM_PROMPT
-from patient_tools import lookup_patient_record, get_diabetes_patients_list, search_patients_by_name, get_patient_medication_list
+from patient_tools import lookup_patient_record, get_diabetes_patients_list, search_patients_by_name, get_patient_medication_list, get_appointments, create_appointment
 
 # Import memory components
 from bedrock_agentcore.memory import MemoryClient
@@ -126,7 +126,7 @@ def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> 
             print(f"Memory configuration failed: {e}")
             session_manager = None
     
-    # Create agent with patient database tools and session manager
+    # Create agent with patient database tools, appointment tools, and session manager
     agent = Agent(
         model=model,
         tools=[
@@ -136,7 +136,9 @@ def create_agent_with_memory(memory_id: str, actor_id: str, session_id: str) -> 
             lookup_patient_record,           # Patient database lookup
             get_diabetes_patients_list,      # List diabetes patients  
             search_patients_by_name,         # Search patients by name
-            get_patient_medication_list      # Get patient medications
+            get_patient_medication_list,     # Get patient medications
+            get_appointments,                # Get appointments
+            create_appointment,              # Create appointment
         ],
         system_prompt=AGENT_SYSTEM_PROMPT,
         session_manager=session_manager  # Pass session manager to agent
