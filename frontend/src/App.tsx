@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '@cloudscape-design/components/app-layout';
 import TopNavigation from '@cloudscape-design/components/top-navigation';
-import SideNavigation from '@cloudscape-design/components/side-navigation';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Container from '@cloudscape-design/components/container';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -18,6 +17,11 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AuthModal from './AuthModal';
 import PatientRegistration from './PatientRegistration';
+import HomePage from './HomePage';
+import MedicationsDetail from './MedicationsDetail';
+import AppointmentsDetail from './AppointmentsDetail';
+import LifestyleDetail from './LifestyleDetail';
+import TreatmentDetail from './TreatmentDetail';
 import { getCurrentUser, signOut, AuthUser } from './auth';
 import { invokeAgentStream } from './agentcore';
 import './markdown.css';
@@ -38,10 +42,10 @@ interface MessageFeedback {
   };
 }
 
-type NavigationItem = 'chat' | 'patient-registration';
+type NavigationItem = 'home' | 'chat' | 'patient-registration' | 'medications' | 'appointments' | 'lifestyle' | 'treatment';
 
 function App() {
-  const [activePage, setActivePage] = useState<NavigationItem>('chat');
+  const [activePage, setActivePage] = useState<NavigationItem>('home');
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -51,10 +55,27 @@ function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [messageFeedback, setMessageFeedback] = useState<MessageFeedback>({});
   const [showSupportPrompts, setShowSupportPrompts] = useState(true);
-  const [navigationOpen, setNavigationOpen] = useState(true);
 
   useEffect(() => {
     checkAuth();
+  }, []);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1);
+      const validPages: NavigationItem[] = ['home', 'chat', 'patient-registration', 'medications', 'appointments', 'lifestyle', 'treatment'];
+
+      if (validPages.includes(hash as NavigationItem)) {
+        setActivePage(hash as NavigationItem);
+      } else if (hash === '') {
+        setActivePage('home');
+        window.location.hash = 'home';
+      }
+    };
+
+    handleHashChange();
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
   const checkAuth = async () => {
@@ -280,6 +301,26 @@ function App() {
 
 
   const renderContent = () => {
+    if (activePage === 'home') {
+      return <HomePage />;
+    }
+
+    if (activePage === 'medications') {
+      return <MedicationsDetail />;
+    }
+
+    if (activePage === 'appointments') {
+      return <AppointmentsDetail />;
+    }
+
+    if (activePage === 'lifestyle') {
+      return <LifestyleDetail />;
+    }
+
+    if (activePage === 'treatment') {
+      return <TreatmentDetail />;
+    }
+
     if (activePage === 'patient-registration') {
       return (
         <ContentLayout defaultPadding>
@@ -564,7 +605,7 @@ function App() {
       />
       <TopNavigation
         identity={{
-          href: "#",
+          href: "#home",
           title: "Medview Connect",
           logo: {
             src: "/medview-logo.svg",
@@ -572,6 +613,36 @@ function App() {
           }
         }}
         utilities={[
+          {
+            type: "button",
+            text: "Home",
+            onClick: (e) => {
+              e.preventDefault();
+              setActivePage('home');
+              window.location.hash = 'home';
+            },
+            variant: activePage === 'home' ? 'primary-button' : undefined
+          },
+          {
+            type: "button",
+            text: "AI Assistant",
+            onClick: (e) => {
+              e.preventDefault();
+              setActivePage('chat');
+              window.location.hash = 'chat';
+            },
+            variant: activePage === 'chat' ? 'primary-button' : undefined
+          },
+          {
+            type: "button",
+            text: "Patient Registration",
+            onClick: (e) => {
+              e.preventDefault();
+              setActivePage('patient-registration');
+              window.location.hash = 'patient-registration';
+            },
+            variant: activePage === 'patient-registration' ? 'primary-button' : undefined
+          },
           {
             type: "button",
             text: user ? `${user.email} | Sign Out` : "Sign In",
@@ -591,43 +662,7 @@ function App() {
         }}
       />
       <AppLayout
-        navigation={
-          <SideNavigation
-            activeHref={`#${activePage}`}
-            header={{
-              href: "#",
-              text: "Medview Connect"
-            }}
-            onFollow={(event) => {
-              event.preventDefault();
-              const page = event.detail.href.substring(1) as NavigationItem;
-              setActivePage(page);
-            }}
-            items={[
-              {
-                type: "link",
-                text: "AI Assistant",
-                href: "#chat"
-              },
-              {
-                type: "divider"
-              },
-              {
-                type: "section",
-                text: "Patient Management",
-                items: [
-                  {
-                    type: "link",
-                    text: "Register Patient",
-                    href: "#patient-registration"
-                  }
-                ]
-              }
-            ]}
-          />
-        }
-        navigationOpen={navigationOpen}
-        onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
+        navigationHide={true}
         toolsHide={true}
         disableContentPaddings
         contentType="default"
