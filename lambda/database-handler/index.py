@@ -196,6 +196,116 @@ def get_patient_medications(patient_id: str):
         }
 
 
+def get_patient_appointments(patient_id: str, status: str = None, start_date: str = None, end_date: str = None):
+    """Retrieve appointments for a specific patient with optional filters."""
+    try:
+        db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
+        secret_arn = os.environ.get('DB_SECRET_ARN')
+        database_name = os.environ.get('DB_NAME', 'medical_records')
+        
+        if not db_cluster_arn or not secret_arn:
+            return {
+                'status': 'error',
+                'message': 'Missing required environment variables'
+            }
+        
+        # Log access without PHI
+        logger.info("Retrieving patient appointments")
+        
+        # Build SQL query with filters
+        sql_query = """
+            SELECT 
+                a.appointment_id, a.patient_id, a.provider_id, a.facility_id,
+                a.appointment_type, a.appointment_reason,
+                a.scheduled_date, a.scheduled_time, a.duration_minutes,
+                a.appointment_status, a.check_in_time, a.check_out_time,
+                a.scheduling_notes, a.provider_notes,
+                a.reminder_sent, a.reminder_sent_date,
+                a.created_at, a.updated_at,
+                p.first_name || ' ' || p.last_name as provider_name,
+                p.specialty as provider_specialty,
+                f.facility_name, f.city as facility_city, f.state as facility_state
+            FROM appointments a
+            LEFT JOIN healthcare_providers p ON a.provider_id = p.provider_id
+            LEFT JOIN medical_facilities f ON a.facility_id = f.facility_id
+            WHERE a.patient_id = :patient_id::uuid
+        """
+        
+        parameters = [{'name': 'patient_id', 'value': {'stringValue': patient_id}}]
+        
+        # Add status filter if provided
+        if status:
+            sql_query += " AND a.appointment_status = :status"
+            parameters.append({'name': 'status', 'value': {'stringValue': status}})
+        
+        # Add date range filters if provided
+        if start_date:
+            sql_query += " AND a.scheduled_date >= :start_date::date"
+            parameters.append({'name': 'start_date', 'value': {'stringValue': start_date}})
+        
+        if end_date:
+            sql_query += " AND a.scheduled_date <= :end_date::date"
+            parameters.append({'name': 'end_date', 'value': {'stringValue': end_date}})
+        
+        sql_query += " ORDER BY a.scheduled_date DESC, a.scheduled_time DESC"
+        
+        response = rds_data_client.execute_statement(
+            resourceArn=db_cluster_arn,
+            secretArn=secret_arn,
+            database=database_name,
+            sql=sql_query,
+            parameters=parameters
+        )
+        
+        appointments = []
+        if 'records' in response and response['records']:
+            fields = [
+                'appointment_id', 'patient_id', 'provider_id', 'facility_id',
+                'appointment_type', 'appointment_reason',
+                'scheduled_date', 'scheduled_time', 'duration_minutes',
+                'appointment_status', 'check_in_time', 'check_out_time',
+                'scheduling_notes', 'provider_notes',
+                'reminder_sent', 'reminder_sent_date',
+                'created_at', 'updated_at',
+                'provider_name', 'provider_specialty',
+                'facility_name', 'facility_city', 'facility_state'
+            ]
+            
+            for record in response['records']:
+                appointment = {}
+                for i, field in enumerate(fields):
+                    if i < len(record):
+                        value = record[i]
+                        if 'stringValue' in value:
+                            appointment[field] = value['stringValue']
+                        elif 'longValue' in value:
+                            appointment[field] = value['longValue']
+                        elif 'booleanValue' in value:
+                            appointment[field] = value['booleanValue']
+                        elif 'isNull' in value:
+                            appointment[field] = None
+                        else:
+                            appointment[field] = str(value)
+                appointments.append(appointment)
+        
+        logger.info(f"Retrieved {len(appointments)} appointments")
+        
+        return {
+            'status': 'success',
+            'message': f'Found {len(appointments)} appointment(s)',
+            'appointments': appointments,
+            'count': len(appointments)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving appointments: {type(e).__name__}")
+        return {
+            'status': 'error',
+            'message': 'Error retrieving appointments',
+            'error_type': type(e).__name__
+        }
+
+
 def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     """
     Patient-Facing Database Handler with PHI-Safe Logging
@@ -267,6 +377,32 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'body': json.dumps(medications_result)
             }
         
+        # Patient-facing: Get appointments for authenticated user
+        if event.get('action') == 'get_patient_appointments':
+            patient_id = event.get('patient_id')
+            
+            if not patient_id:
+                return {
+                    'statusCode': 400,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'status': 'error',
+                        'message': 'Missing required parameter: patient_id'
+                    })
+                }
+            
+            # Optional filters
+            status = event.get('status')
+            start_date = event.get('start_date')
+            end_date = event.get('end_date')
+            
+            appointments_result = get_patient_appointments(patient_id, status, start_date, end_date)
+            return {
+                'statusCode': 200 if appointments_result['status'] != 'error' else 500,
+                'headers': headers,
+                'body': json.dumps(appointments_result)
+            }
+        
         if event.get('action') == 'health_check':
             return {
                 'statusCode': 200,
@@ -286,7 +422,8 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 'available_actions': [
                     'health_check',
                     'test_db_connection',
-                    'get_patient_medications'
+                    'get_patient_medications',
+                    'get_patient_appointments'
                 ],
                 'note': 'This is a patient-facing API. Admin functions have been removed for security.'
             })

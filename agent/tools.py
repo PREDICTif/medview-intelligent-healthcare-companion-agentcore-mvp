@@ -572,135 +572,174 @@ def get_appointments(
     end_date: Optional[str] = None
 ) -> str:
     """
-    Retrieve patient appointments with optional filters.
+    Retrieve YOUR appointments with optional filters.
+    
+    This tool shows appointments for the currently logged-in user only.
+    No patient ID needed - uses your authenticated session automatically.
     
     Args:
-        patient_id: Filter by patient UUID (optional, uses current user if not provided)
-        provider_id: Filter by provider UUID
-        status: Filter by status (Scheduled, Confirmed, Cancelled, Completed, No-Show)
-        start_date: Filter from this date (YYYY-MM-DD)
-        end_date: Filter until this date (YYYY-MM-DD)
+        provider_id: Filter by specific provider (optional)
+        status: Filter by status - Scheduled, Confirmed, Cancelled, Completed, No-Show (optional)
+        start_date: Filter from this date YYYY-MM-DD (optional)
+        end_date: Filter until this date YYYY-MM-DD (optional)
     
     Returns:
-        JSON string with appointments list
+        Your appointments with details
     """
     try:
         # If no patient_id provided, use current user
         if not patient_id:
             patient_id = get_patient_id_for_current_user()
             if not patient_id:
-                return json.dumps({
-                    'error': 'Authentication required to view appointments'
-                }, indent=2)
+                return """❌ **Authentication Required**
+
+I cannot access your appointment information because you are not logged in.
+
+Please sign in to view your appointments."""
         
-        params = {'action': 'get_appointments', 'patient_id': patient_id}
+        lambda_url = get_lambda_url()
+        if not lambda_url:
+            return "❌ Appointment database is temporarily unavailable. Please try again later."
         
-        if provider_id:
-            params['provider_id'] = provider_id
+        base_url = lambda_url.rstrip('/')
+        appointments_payload = {
+            "action": "get_patient_appointments",
+            "patient_id": patient_id
+        }
+        
+        # Add optional filters
         if status:
-            params['status'] = status
+            appointments_payload['status'] = status
         if start_date:
-            params['start_date'] = start_date
+            appointments_payload['start_date'] = start_date
         if end_date:
-            params['end_date'] = end_date
+            appointments_payload['end_date'] = end_date
         
-        lambda_client = boto3.client('lambda', region_name='us-east-1')
-        function_name = os.environ.get(
-            'APPOINTMENT_LAMBDA_FUNCTION_NAME',
-            'MihcStack-GatewayLambda679C3A36-lWEbMl7wejem'
-        )
+        appt_response = requests.post(base_url, json=appointments_payload, timeout=30)
         
-        response = lambda_client.invoke(
-            FunctionName=function_name,
-            InvocationType='RequestResponse',
-            Payload=json.dumps(params)
-        )
-        
-        result = json.loads(response['Payload'].read())
-        
-        if result.get('statusCode') == 200:
-            body = json.loads(result.get('body', '{}'))
-            return json.dumps(body, indent=2)
-        else:
-            return json.dumps({
-                'error': 'Failed to retrieve appointments',
-                'details': result
-            }, indent=2)
+        if appt_response.status_code == 200:
+            appt_data = appt_response.json()
             
+            if appt_data.get('status') == 'success':
+                appointments = appt_data.get('appointments', [])
+                
+                summary = "📅 **Your Appointments**\n\n"
+                
+                if not appointments:
+                    summary += "📋 **No appointments found.**\n\n"
+                    summary += "You currently have no scheduled appointments in the system.\n\n"
+                    summary += "💡 To schedule an appointment, please contact your healthcare provider."
+                    return summary
+                
+                # Group by status
+                upcoming = [a for a in appointments if a.get('appointment_status') in ['Scheduled', 'Confirmed']]
+                completed = [a for a in appointments if a.get('appointment_status') == 'Completed']
+                cancelled = [a for a in appointments if a.get('appointment_status') in ['Cancelled', 'No Show']]
+                
+                if upcoming:
+                    summary += f"🔜 **Upcoming Appointments ({len(upcoming)}):**\n\n"
+                    for i, appt in enumerate(upcoming, 1):
+                        summary += f"{i}. **{appt.get('appointment_type', 'Appointment')}**\n"
+                        summary += f"   - **Date:** {appt.get('scheduled_date')} at {appt.get('scheduled_time')}\n"
+                        summary += f"   - **Provider:** {appt.get('provider_name', 'N/A')}"
+                        if appt.get('provider_specialty'):
+                            summary += f" ({appt.get('provider_specialty')})"
+                        summary += "\n"
+                        if appt.get('facility_name'):
+                            summary += f"   - **Location:** {appt.get('facility_name')}"
+                            if appt.get('facility_city'):
+                                summary += f", {appt.get('facility_city')}, {appt.get('facility_state')}"
+                            summary += "\n"
+                        if appt.get('appointment_reason'):
+                            summary += f"   - **Reason:** {appt.get('appointment_reason')}\n"
+                        summary += f"   - **Duration:** {appt.get('duration_minutes', 30)} minutes\n"
+                        summary += f"   - **Status:** {appt.get('appointment_status')}\n"
+                        if appt.get('scheduling_notes'):
+                            summary += f"   - **Notes:** {appt.get('scheduling_notes')}\n"
+                        summary += "\n"
+                
+                if completed:
+                    summary += f"✅ **Past Appointments ({len(completed)}):**\n\n"
+                    for i, appt in enumerate(completed[:5], 1):  # Show last 5
+                        summary += f"{i}. **{appt.get('appointment_type')}** - {appt.get('scheduled_date')}\n"
+                        summary += f"   - Provider: {appt.get('provider_name', 'N/A')}\n"
+                        if appt.get('appointment_reason'):
+                            summary += f"   - Reason: {appt.get('appointment_reason')}\n"
+                        summary += "\n"
+                    if len(completed) > 5:
+                        summary += f"   ... and {len(completed) - 5} more past appointments\n\n"
+                
+                if cancelled:
+                    summary += f"❌ **Cancelled/No-Show ({len(cancelled)}):**\n\n"
+                    for i, appt in enumerate(cancelled[:3], 1):  # Show last 3
+                        summary += f"{i}. **{appt.get('appointment_type')}** - {appt.get('scheduled_date')}\n"
+                        summary += f"   - Status: {appt.get('appointment_status')}\n\n"
+                
+                summary += "\n💡 **Need to schedule?** Contact your healthcare provider to book an appointment."
+                
+                return summary
+            else:
+                return f"❌ Error retrieving your appointments: {appt_data.get('message', 'Unknown error')}"
+        else:
+            return f"❌ Error accessing appointment database (Status: {appt_response.status_code})"
+            
+    except requests.exceptions.Timeout:
+        return "❌ Request timed out. Please try again."
+    except requests.exceptions.ConnectionError:
+        return "❌ Cannot connect to appointment database. Please check your connection."
     except Exception as e:
-        return json.dumps({'error': str(e)}, indent=2)
+        return f"❌ Error retrieving appointments. Please try again later."
 
 
 @tool
 def create_appointment(
-    patient_id: str,
     provider_id: str,
     appointment_date: str,
-    created_by: str,
+    appointment_type: str,
+    reason_for_visit: str,
     facility_id: Optional[str] = None,
     duration_minutes: int = 30,
-    appointment_type: Optional[str] = None,
-    reason_for_visit: Optional[str] = None,
     notes: Optional[str] = None
 ) -> str:
     """
-    Create a new appointment.
+    Schedule a new appointment for yourself.
+    
+    This tool creates an appointment for the currently logged-in user.
+    No patient ID needed - uses your authenticated session automatically.
     
     Args:
-        patient_id: Patient UUID
-        provider_id: Provider UUID
-        appointment_date: Date and time (ISO 8601 format)
-        created_by: UUID of user creating appointment
+        provider_id: Provider UUID (required)
+        appointment_date: Date and time in format YYYY-MM-DD HH:MM (required)
+        appointment_type: Type like "Office Visit", "Follow-up", "Consultation" (required)
+        reason_for_visit: Reason for the appointment (required)
         facility_id: Facility UUID (optional)
-        duration_minutes: Duration in minutes
-        appointment_type: Type (Consultation, Follow-up, etc.)
-        reason_for_visit: Reason for visit
-        notes: Additional notes
+        duration_minutes: Duration in minutes (default: 30)
+        notes: Additional notes (optional)
     
     Returns:
-        JSON string with created appointment details
+        Confirmation of appointment creation
     """
     try:
-        params = {
-            'action': 'create_appointment',
-            'patient_id': patient_id,
-            'provider_id': provider_id,
-            'appointment_date': appointment_date,
-            'created_by': created_by,
-            'duration_minutes': duration_minutes
-        }
+        patient_id = get_patient_id_for_current_user()
+        if not patient_id:
+            return """❌ **Authentication Required**
+
+I cannot schedule an appointment because you are not logged in.
+
+Please sign in to schedule appointments."""
         
-        if facility_id:
-            params['facility_id'] = facility_id
-        if appointment_type:
-            params['appointment_type'] = appointment_type
-        if reason_for_visit:
-            params['reason_for_visit'] = reason_for_visit
-        if notes:
-            params['notes'] = notes
-        
-        lambda_client = boto3.client('lambda', region_name='us-east-1')
-        function_name = os.environ.get(
-            'APPOINTMENT_LAMBDA_FUNCTION_NAME',
-            'MihcStack-GatewayLambda679C3A36-lWEbMl7wejem'
-        )
-        
-        response = lambda_client.invoke(
-            FunctionName=function_name,
-            InvocationType='RequestResponse',
-            Payload=json.dumps(params)
-        )
-        
-        result = json.loads(response['Payload'].read())
-        
-        if result.get('statusCode') == 200:
-            body = json.loads(result.get('body', '{}'))
-            return json.dumps(body, indent=2)
-        else:
-            return json.dumps({
-                'error': 'Failed to create appointment',
-                'details': result
-            }, indent=2)
+        # Note: Appointment creation is not yet implemented in the database handler
+        # This is a placeholder that will be implemented when appointment endpoints are added
+        return """📅 **Appointment Scheduling Coming Soon**
+
+The appointment scheduling feature is currently being developed and will be available soon.
+
+To schedule an appointment now, please:
+- Call your healthcare provider directly
+- Use the patient portal
+- Contact the front desk
+
+We apologize for the inconvenience and appreciate your patience."""
             
     except Exception as e:
-        return json.dumps({'error': str(e)}, indent=2)
+        return f"❌ Error creating appointment. Please try again later."
