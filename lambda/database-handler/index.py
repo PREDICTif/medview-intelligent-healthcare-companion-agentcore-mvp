@@ -329,12 +329,6 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     """
     
     try:
-        # Extract parameters from queryStringParameters (Lambda Function URL) or direct event (API Gateway)
-        params = event.get('queryStringParameters') or {}
-        action = params.get('action') or event.get('action', 'unknown')
-
-        # Log request without PHI
-        logger.info(f"Request received - action: {action}")
 
         # Parse body for Lambda Function URL requests
         if event.get('body'):
@@ -343,6 +337,12 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                 event.update(body_data)
             except (json.JSONDecodeError, TypeError):
                 logger.warning("Could not parse request body")
+        # Extract parameters from queryStringParameters (Lambda Function URL) or direct event (API Gateway)
+        params = event.get('queryStringParameters') or {}
+        action = params.get('action') or event.get('action', 'unknown')
+
+        # Log request without PHI
+        logger.info(f"Request received - action: {action}")
         
         headers = {
             'Content-Type': 'application/json',
