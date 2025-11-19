@@ -108,24 +108,30 @@ def test_database_connection():
         }
 
 
-def get_patient_medications(patient_id: str):
-    """Retrieve all medications for a specific patient."""
+def get_patient_medications(patient_id: str, active_only: bool = False):
+    """Retrieve medications for a specific patient.
+
+    Args:
+        patient_id: Patient's UUID (Cognito ID)
+        active_only: If True, return only active medications
+    """
     try:
         db_cluster_arn = os.environ.get('DB_CLUSTER_ARN')
         secret_arn = os.environ.get('DB_SECRET_ARN')
         database_name = os.environ.get('DB_NAME', 'medical_records')
-        
+
         if not db_cluster_arn or not secret_arn:
             return {
                 'status': 'error',
                 'message': 'Missing required environment variables'
             }
-        
+
         # Log access without PHI
-        logger.info("Retrieving patient medications")
-        
+        logger.info(f"Retrieving patient medications (active_only={active_only})")
+
+        # Base query with JOIN to get prescriber information
         sql_query = """
-            SELECT 
+            SELECT
                 m.medication_id, m.patient_id, m.medication_name, m.generic_name, m.ndc_code,
                 m.dosage, m.frequency, m.route, m.quantity_prescribed, m.refills_remaining,
                 m.prescription_date, m.start_date, m.end_date, m.medication_status,
@@ -134,15 +140,14 @@ def get_patient_medications(patient_id: str):
             FROM medications m
             LEFT JOIN healthcare_providers p ON m.prescribed_by = p.provider_id
             WHERE m.patient_id = :patient_id::uuid
-            ORDER BY 
-                CASE m.medication_status
-                    WHEN 'Active' THEN 1
-                    WHEN 'Discontinued' THEN 2
-                    WHEN 'Completed' THEN 3
-                    ELSE 4
-                END,
-                m.prescription_date DESC
         """
+
+        # Add status filter if active_only
+        if active_only:
+            sql_query += " AND m.medication_status = 'Active'"
+
+        # Chronological order: newest first
+        sql_query += " ORDER BY m.prescription_date DESC, m.created_at DESC"
         
         response = rds_data_client.execute_statement(
             resourceArn=db_cluster_arn,
@@ -179,12 +184,14 @@ def get_patient_medications(patient_id: str):
                 medications.append(medication)
         
         logger.info(f"Retrieved {len(medications)} medications")
-        
+
         return {
             'status': 'success',
             'message': f'Found {len(medications)} medication(s)',
+            'patient_id': patient_id,
             'medications': medications,
-            'count': len(medications)
+            'count': len(medications),
+            'active_only': active_only
         }
         
     except Exception as e:
@@ -322,9 +329,13 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     """
     
     try:
+        # Extract parameters from queryStringParameters (Lambda Function URL) or direct event (API Gateway)
+        params = event.get('queryStringParameters') or {}
+        action = params.get('action') or event.get('action', 'unknown')
+
         # Log request without PHI
-        logger.info(f"Request received - action: {event.get('action', 'unknown')}")
-        
+        logger.info(f"Request received - action: {action}")
+
         # Parse body for Lambda Function URL requests
         if event.get('body'):
             try:
@@ -348,7 +359,7 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
             }
         
         # Health check and database connection test
-        if event.get('action') == 'test_db_connection':
+        if action == 'test_db_connection':
             db_test_result = test_database_connection()
             return {
                 'statusCode': 200 if db_test_result['status'] != 'error' else 500,
@@ -357,9 +368,12 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
             }
         
         # Patient-facing: Get medications for authenticated user
-        if event.get('action') == 'get_patient_medications':
-            patient_id = event.get('patient_id')
-            
+        if action == 'get_patient_medications':
+            patient_id = params.get('patient_id') or event.get('patient_id')
+            active_only_str = params.get('active_only') or event.get('active_only', 'false')
+            # Convert string to boolean (Lambda Function URL sends query params as strings)
+            active_only = active_only_str in ['true', 'True', '1', True] if isinstance(active_only_str, (str, bool)) else False
+
             if not patient_id:
                 return {
                     'statusCode': 400,
@@ -369,8 +383,8 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
                         'message': 'Missing required parameter: patient_id'
                     })
                 }
-            
-            medications_result = get_patient_medications(patient_id)
+
+            medications_result = get_patient_medications(patient_id, active_only)
             return {
                 'statusCode': 200 if medications_result['status'] != 'error' else 500,
                 'headers': headers,

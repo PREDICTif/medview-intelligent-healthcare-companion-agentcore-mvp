@@ -39,7 +39,16 @@ const agentStack = new AgentCoreStack(app, 'AgentCoreRuntime', {
   description: 'AgentCore Runtime: Container-based agent with built-in Cognito authentication',
 });
 
-// Frontend stack (depends on runtime and auth stacks)
+// MIHC stack (Medical Intelligent Healthcare Companion) - created before frontend to provide Lambda URL
+const mihcStack = new MihcStack(app, 'MihcStack', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+  },
+  description: 'MIHC: Medical database, Lambda functions, and healthcare data infrastructure',
+});
+
+// Frontend stack (depends on runtime, auth, and MIHC stacks)
 new FrontendStack(app, 'AgentCoreFrontend', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
@@ -49,16 +58,8 @@ new FrontendStack(app, 'AgentCoreFrontend', {
   userPoolClientId: authStack.userPoolClient.userPoolClientId,
   agentRuntimeArn: agentStack.agentRuntimeArn,
   region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+  databaseLambdaUrl: mihcStack.databaseLambdaUrl,
   description: 'AgentCore Frontend: CloudFront-hosted React interface with direct AgentCore integration',
-});
-
-// MIHC stack (Medical Intelligent Healthcare Companion)
-new MihcStack(app, 'MihcStack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
-  },
-  description: 'MIHC: Medical database, Lambda functions, and healthcare data infrastructure',
 });
 
 app.synth();
