@@ -134,7 +134,7 @@ const HomePage = ({ userId }: HomePageProps) => {
         <SpaceBetween size="m">
           <div style={{ textAlign: 'center' }}>
             <h1 style={{ 
-              fontSize: 'var(--awsui-font-heading-xl-size, 2.25rem)',
+              fontSize: 'var(--awsui-font-heading-xl-size, 2rem)',
               fontWeight: 'bold',
               margin: 0,
               padding: '20px 0'
