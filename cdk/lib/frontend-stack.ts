@@ -11,6 +11,7 @@ interface FrontendStackProps extends cdk.StackProps {
   userPoolClientId: string;
   agentRuntimeArn: string;
   region: string;
+  databaseLambdaUrl: string;
 }
 
 export class FrontendStack extends cdk.Stack {
@@ -29,6 +30,14 @@ export class FrontendStack extends cdk.Stack {
       signing: cloudfront.Signing.SIGV4_NO_OVERRIDE,
     });
 
+    // Extract domain from Lambda Function URL (format: https://<url-id>.lambda-url.<region>.on.aws/)
+    const lambdaDomain = cdk.Fn.select(2, cdk.Fn.split('/', props.databaseLambdaUrl));
+
+    // Create Lambda Function URL origin for API requests
+    const lambdaOrigin = new origins.HttpOrigin(lambdaDomain, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+    });
+
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: 'Amazon Bedrock AgentCore Demo - Frontend Distribution',
       defaultBehavior: {
@@ -36,6 +45,16 @@ export class FrontendStack extends cdk.Stack {
           originAccessControl,
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      additionalBehaviors: {
+        '/api/*': {
+          origin: lambdaOrigin,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // Disable caching for API requests
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        },
       },
       defaultRootObject: 'index.html',
       errorResponses: [

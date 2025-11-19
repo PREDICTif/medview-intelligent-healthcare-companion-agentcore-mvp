@@ -302,11 +302,11 @@ function App() {
 
   const renderContent = () => {
     if (activePage === 'home') {
-      return <HomePage />;
+      return <HomePage userId={user?.sub} />;
     }
 
     if (activePage === 'medications') {
-      return <MedicationsDetail />;
+      return <MedicationsDetail userId={user?.sub} />;
     }
 
     if (activePage === 'appointments') {

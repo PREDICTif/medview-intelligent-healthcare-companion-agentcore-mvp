@@ -25,6 +25,7 @@ export class MihcStack extends cdk.Stack {
   public readonly databaseSecurityGroup: ec2.SecurityGroup;
   public readonly databaseLambda: lambda.Function;
   public readonly lambdaSecurityGroup: ec2.SecurityGroup;
+  public readonly databaseLambdaUrl: string;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -292,6 +293,9 @@ export class MihcStack extends cdk.Stack {
     const functionUrl = this.databaseLambda.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE, // No auth required - DEVELOPMENT ONLY
     });
+
+    // Export the function URL for use in other stacks (e.g., CloudFront integration)
+    this.databaseLambdaUrl = functionUrl.url;
 
     new cdk.CfnOutput(this, "RawBucketName", {
       value: this.rawBucket.bucketName,

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   Box,
   Cards,
@@ -16,12 +17,72 @@ interface DashboardCard {
   route: string;
 }
 
-const HomePage = () => {
+interface Medication {
+  medication_id: string;
+  medication_name: string;
+  generic_name?: string;
+  dosage: string;
+  frequency: string;
+  medication_status: 'Active' | 'Completed';
+  prescription_date: string;
+}
+
+interface HomePageProps {
+  userId?: string;
+}
+
+const HomePage = ({ userId }: HomePageProps) => {
+  const [activeMedications, setActiveMedications] = useState<Medication[]>([]);
+  const [medicationsLoading, setMedicationsLoading] = useState(true);
+  const [medicationsError, setMedicationsError] = useState<string | null>(null);
+
+  // Fetch active medications on mount
+  useEffect(() => {
+    const fetchMedications = async () => {
+      if (!userId) {
+        setMedicationsError('User not authenticated');
+        setMedicationsLoading(false);
+        return;
+      }
+
+      try {
+        setMedicationsLoading(true);
+        const response = await fetch(`/api/medications?action=get_patient_medications&patient_id=${userId}&active_only=true`);
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+          setActiveMedications(data.medications || []);
+          setMedicationsError(null);
+        } else {
+          setMedicationsError(data.message || 'Failed to load medications');
+        }
+      } catch (error) {
+        setMedicationsError('Unable to load medications');
+        console.error('Error fetching medications:', error);
+      } finally {
+        setMedicationsLoading(false);
+      }
+    };
+
+    fetchMedications();
+  }, [userId]);
+
   const dashboardCards: DashboardCard[] = [
     {
       id: 'medications',
       title: 'Medications',
-      description: 'Manage and track your medications, prescriptions, and dosage schedules.',
+      description: medicationsLoading
+        ? 'Loading your medications...'
+        : medicationsError
+        ? 'Unable to load medications'
+        : activeMedications.length === 0
+        ? 'No active medications'
+        : `You have ${activeMedications.length} active medication${activeMedications.length !== 1 ? 's' : ''}`,
       icon: '💊',
       route: '#medications',
     },
