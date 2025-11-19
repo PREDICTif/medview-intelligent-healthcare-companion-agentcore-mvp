@@ -87,25 +87,30 @@ const MedicationsDetail = ({ userId }: MedicationsDetailProps) => {
   const completedMedCount = medications.filter(m => m.medication_status === 'Completed').length;
 
   return (
-    <ContentLayout
-      header={
-        <Header
-          variant="h1"
-          description="View and manage your medication history"
-          actions={
-            <Button
-              onClick={() => { window.location.hash = 'home'; }}
-              iconName="arrow-left"
-            >
-              Back to Home
-            </Button>
-          }
-        >
-          Medications Management
-        </Header>
-      }
-    >
-      <SpaceBetween size="l">
+    <ContentLayout>
+      <Box padding={{ horizontal: 'xxxl' }}>
+        <SpaceBetween size="m">
+          {/* Header Row: Title centered with button on right */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '1.5rem' }}>
+            <div style={{ flex: 1 }}></div>
+            <Box variant="h1" fontSize="heading-xl" fontWeight="bold" textAlign="center" style={{ flex: 1 }}>
+              Medications Management
+            </Box>
+            <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                onClick={() => { window.location.hash = 'home'; }}
+                iconName="arrow-left"
+              >
+                Back to Home
+              </Button>
+            </div>
+          </div>
+
+          {/* Subtitle Row: Centered below */}
+          <Box variant="p" color="text-body-secondary" textAlign="center">
+            View and manage your medication history
+          </Box>
+        <SpaceBetween size="l">
         {error && (
           <Alert type="error" header="Error Loading Medications">
             {error}
@@ -267,6 +272,8 @@ const MedicationsDetail = ({ userId }: MedicationsDetailProps) => {
           />
         </Container>
       </SpaceBetween>
+        </SpaceBetween>
+      </Box>
     </ContentLayout>
   );
 };
