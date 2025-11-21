@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "This is a blueprint of prescription labels",
+  "class": "Prescription-labels",
+  "type": "object",
+  "definitions": {
+    "prescrription_details": {
+      "type": "object",
+      "properties": {
+        "prescribed_by": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Prescription Dr's office"
+        },
+        "prescribed_medication": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Prescribed medication"
+        },
+        "intake_fequency": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Prescribed medication intake frequency"
+        },
+        "intake_method": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Prescribed medication intake method"
+        },
+        "allows_refills": {
+          "type": "boolean",
+          "inferenceType": "explicit",
+          "instruction": "Are refills allowed"
+        },
+        "needs_dr_authorization_for_refills": {
+          "type": "boolean",
+          "inferenceType": "explicit",
+          "instruction": "needs Dr authorization for refills"
+        },
+        "expiration_date": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Prescription expiration date"
+        },
+        "prescription_quantity": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Prescribed medication quantity"
+        }
+      }
+    },
+    "pharmacy_details": {
+      "type": "object",
+      "properties": {
+        "pharmacy_name": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Drug store name"
+        },
+        "pharmacy_address": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Drug store address"
+        },
+        "pharmacy_phone_no": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Drug store contact number"
+        },
+        "Rx_number": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Drug store Rx number"
+        }
+      }
+    },
+    "customer_details": {
+      "type": "object",
+      "properties": {
+        "customer_name": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Customer name"
+        },
+        "customer_address": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Customer address"
+        }
+      }
+    },
+    "prescription_details": {
+      "type": "object",
+      "properties": {
+        "prescription_date": {
+          "type": "string",
+          "inferenceType": "explicit",
+          "instruction": "Prescription provided date"
+        }
+      }
+    }
+  },
+  "properties": {
+    "Is the prescription date > expiration date?": {
+      "type": "boolean",
+      "inferenceType": "explicit",
+      "instruction": "Validation question"
+    },
+    "Is the dosage frequency mentioned?": {
+      "type": "boolean",
+      "inferenceType": "explicit",
+      "instruction": "Validation question"
+    },
+    "Is the dosage quantity mentioned?": {
+      "type": "boolean",
+      "inferenceType": "explicit",
+      "instruction": "Validation question"
+    },
+    "Is the prescribing physician's name present?": {
+      "type": "boolean",
+      "inferenceType": "explicit",
+      "instruction": "Validation question"
+    },
+    "prescrription_details": {
+      "$ref": "#/definitions/prescrription_details",
+      "instruction": "-"
+    },
+    "pharmacy_details": {
+      "$ref": "#/definitions/pharmacy_details",
+      "instruction": "-"
+    },
+    "customer_details": {
+      "$ref": "#/definitions/customer_details",
+      "instruction": "-"
+    },
+    "prescription_details": {
+      "$ref": "#/definitions/prescription_details",
+      "instruction": "-"
+    }
+  }
+}
