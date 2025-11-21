@@ -195,6 +195,7 @@ export const invokeAgentStream = async (
     const reader = response.body?.getReader();
     const decoder = new TextDecoder();
     let fullResponse = '';
+    let isNewMessage = false;  // Track when a new message starts to add separator
 
     if (reader) {
       try {
@@ -233,8 +234,16 @@ export const invokeAgentStream = async (
                     // Handle content block delta (actual text content)
                     if (event.contentBlockDelta && event.contentBlockDelta.delta && event.contentBlockDelta.delta.text) {
                       const text = event.contentBlockDelta.delta.text;
-                      fullResponse += text;
-                      onChunk(text);
+
+                      // Add separator if this is the first chunk of a new message
+                      if (isNewMessage) {
+                        fullResponse += '\n\n' + text;
+                        onChunk('\n\n' + text);
+                        isNewMessage = false;  // Reset flag after adding separator
+                      } else {
+                        fullResponse += text;
+                        onChunk(text);
+                      }
                     }
                     // Handle message delta (streaming text)
                     else if (event.messageDelta && event.messageDelta.delta && event.messageDelta.delta.text) {
@@ -275,9 +284,9 @@ export const invokeAgentStream = async (
                               
                               streamWords();
                             } else {
-                              // We already have content, just add this
-                              fullResponse += text;
-                              onChunk(text);
+                              // We already have content, add separator before this message
+                              fullResponse += '\n\n' + text;
+                              onChunk('\n\n' + text);
                             }
                           }
                         }
@@ -290,16 +299,34 @@ export const invokeAgentStream = async (
                     // Handle tool result content
                     else if (event.contentBlockStart && event.contentBlockStart.start && event.contentBlockStart.start.text) {
                       const text = event.contentBlockStart.start.text;
-                      fullResponse += text;
-                      onChunk(text);
-                    }
-                    // Handle message content
-                    else if (event.messageStart && event.messageStart.message && event.messageStart.message.content) {
-                      const content = event.messageStart.message.content;
-                      if (Array.isArray(content) && content[0] && content[0].text) {
-                        const text = content[0].text;
+                      if (fullResponse.trim()) {
+                        fullResponse += '\n\n' + text;  // ✅ Add separator if content exists
+                        onChunk('\n\n' + text);
+                      } else {
                         fullResponse += text;
                         onChunk(text);
+                      }
+                    }
+                    // Handle message start - track when new message begins
+                    else if (event.messageStart && event.messageStart.role === 'assistant') {
+                      // Set flag to add separator before next content chunk if we have existing content
+                      if (fullResponse.trim()) {
+                        isNewMessage = true;
+                      }
+                      // Handle message content if present
+                      if (event.messageStart.message && event.messageStart.message.content) {
+                        const content = event.messageStart.message.content;
+                        if (Array.isArray(content) && content[0] && content[0].text) {
+                          const text = content[0].text;
+                          // Add separator if we already have content from previous message
+                          if (fullResponse.trim()) {
+                            fullResponse += '\n\n' + text;
+                            onChunk('\n\n' + text);
+                          } else {
+                            fullResponse += text;
+                            onChunk(text);
+                          }
+                        }
                       }
                     }
                   }
