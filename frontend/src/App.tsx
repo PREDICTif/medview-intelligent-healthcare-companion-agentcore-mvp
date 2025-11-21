@@ -139,23 +139,6 @@ function App() {
     }
   };
 
-  const cleanResponse = (response: string): string => {
-    // Remove surrounding quotes if present
-    let cleaned = response.trim();
-    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
-      (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
-      cleaned = cleaned.slice(1, -1);
-    }
-
-    // Replace literal \n with actual newlines
-    cleaned = cleaned.replace(/\\n/g, '\n');
-
-    // Replace literal \t with actual tabs
-    cleaned = cleaned.replace(/\\t/g, '\t');
-
-    return cleaned;
-  };
-
   const handleSupportPromptClick = (promptText: string) => {
     // Fill the prompt input with the selected text
     setPrompt(promptText);
@@ -208,20 +191,26 @@ function App() {
           setMessages(prev => {
             const newMessages = [...prev];
             const agentMsg = newMessages[agentMessageIndex];
-            if (agentMsg && agentMsg.type === 'agent') {
-              agentMsg.content += cleanResponse(chunk);
-            }
+            // if (agentMsg && agentMsg.type === 'agent') {
+            // agentMsg.content += cleanResponse(chunk);
+              agentMsg.content += chunk;
+              
+            //   console.log('[STREAMING DEBUG] Total length:', agentMsg.content.length, '| Last 150 chars:', agentMsg.content.substring(Math.max(0, agentMsg.content.length - 150)));
+            // }
             return newMessages;
           });
         },
         // onComplete - called when streaming is done
         (fullResponse: string) => {
+          console.log('[STREAMING DEBUG] onComplete - Full response length:', fullResponse.length, '| First 200 chars:', fullResponse.substring(0, 200));
           setMessages(prev => {
             const newMessages = [...prev];
             const agentMsg = newMessages[agentMessageIndex];
-            if (agentMsg && agentMsg.type === 'agent') {
-              agentMsg.content = cleanResponse(fullResponse);
-            }
+            console.log('Before onComplete:', agentMsg.content);
+            // if (agentMsg && agentMsg.type === 'agent') {
+            //   agentMsg.content = cleanResponse(fullResponse);
+            //   console.log('[STREAMING DEBUG] Final content set, length:', agentMsg.content.length);
+            // }
             return newMessages;
           });
           setLoading(false);
