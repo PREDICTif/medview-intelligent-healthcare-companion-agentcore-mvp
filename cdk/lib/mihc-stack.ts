@@ -1,19 +1,24 @@
-import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
-import * as iam from "aws-cdk-lib/aws-iam";
-import * as s3 from "aws-cdk-lib/aws-s3";
-import * as rds from "aws-cdk-lib/aws-rds";
-import * as ec2 from "aws-cdk-lib/aws-ec2";
-import * as kms from "aws-cdk-lib/aws-kms";
-import * as logs from "aws-cdk-lib/aws-logs";
-import * as lambda from "aws-cdk-lib/aws-lambda";
-// import * as glue from "@aws-cdk/aws-glue-alpha";
+import {
+  Stack,
+  StackProps,
+  RemovalPolicy,
+  Duration,
+  CfnOutput,
+  aws_ec2 as ec2,
+  aws_iam as iam,
+  aws_kms as kms,
+  aws_lambda as lambda,
+  aws_logs as logs,
+  aws_rds as rds,
+  aws_s3 as s3,
+} from "aws-cdk-lib";
 
-// export interface MihcStackProps extends cdk.StackProps {
+// export interface MihcStackProps extends StackProps {
 //   stageName: string;
 // }
 
-export class MihcStack extends cdk.Stack {
+export class MihcStack extends Stack {
   public readonly rawBucket: s3.Bucket;
   public readonly processedBucket: s3.Bucket;
   public readonly curatedBucket: s3.Bucket;
@@ -24,10 +29,11 @@ export class MihcStack extends cdk.Stack {
   public readonly databaseKmsKey: kms.Key;
   public readonly databaseSecurityGroup: ec2.SecurityGroup;
   public readonly databaseLambda: lambda.Function;
+  public readonly bdaDataExtractionLambda: lambda.Function;
   public readonly lambdaSecurityGroup: ec2.SecurityGroup;
   public readonly databaseLambdaUrl: string;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
     // constructor(scope: Construct, id: string, props: MihcStackProps) {
@@ -59,6 +65,13 @@ export class MihcStack extends cdk.Stack {
       "ScriptBucket"
     );
 
+    // IMPORTANT: Bedrock Data Automation requires S3 bucket policies
+    // The service needs direct access to buckets, not just through the Lambda role
+    
+    // Make buckets publicly accessible to Bedrock service (no conditions for testing)
+    this.rawBucket.grantRead(new iam.ServicePrincipal("bedrock.amazonaws.com"));
+    this.processedBucket.grantReadWrite(new iam.ServicePrincipal("bedrock.amazonaws.com"));
+
     // Create simplified VPC for development
     this.vpc = new ec2.Vpc(this, "MihcVpc", {
       maxAzs: 2, // 2 AZs for development
@@ -83,7 +96,7 @@ export class MihcStack extends cdk.Stack {
     this.databaseKmsKey = new kms.Key(this, "DatabaseKmsKey", {
       description: "KMS key for medical database encryption (development)",
       enableKeyRotation: true,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // Allow destruction in development
+      removalPolicy: RemovalPolicy.DESTROY, // Allow destruction in development
       policy: new iam.PolicyDocument({
         statements: [
           new iam.PolicyStatement({
@@ -108,7 +121,7 @@ export class MihcStack extends cdk.Stack {
           new iam.PolicyStatement({
             sid: "Allow CloudWatch Logs Service",
             effect: iam.Effect.ALLOW,
-            principals: [new iam.ServicePrincipal(`logs.${cdk.Stack.of(this).region}.amazonaws.com`)],
+            principals: [new iam.ServicePrincipal(`logs.${Stack.of(this).region}.amazonaws.com`)],
             actions: [
               "kms:Encrypt",
               "kms:Decrypt",
@@ -119,7 +132,7 @@ export class MihcStack extends cdk.Stack {
             resources: ["*"],
             conditions: {
               ArnEquals: {
-                "kms:EncryptionContext:aws:logs:arn": `arn:aws:logs:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:log-group:/aws/rds/cluster/mihc-medical-database/postgresql`,
+                "kms:EncryptionContext:aws:logs:arn": `arn:aws:logs:${Stack.of(this).region}:${Stack.of(this).account}:log-group:/aws/rds/cluster/mihc-medical-database/postgresql`,
               },
             },
           }),
@@ -152,7 +165,7 @@ export class MihcStack extends cdk.Stack {
       logGroupName: "/aws/rds/cluster/mihc-medical-database/postgresql",
       retention: logs.RetentionDays.ONE_MONTH, // Reduced retention for development
       encryptionKey: this.databaseKmsKey,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // Allow destruction in development
+      removalPolicy: RemovalPolicy.DESTROY, // Allow destruction in development
     });
 
     // Create Aurora Serverless v2 PostgreSQL cluster for development
@@ -179,14 +192,14 @@ export class MihcStack extends cdk.Stack {
       },
       securityGroups: [this.databaseSecurityGroup],
       backup: {
-        retention: cdk.Duration.days(7), // Reduced retention for development
+        retention: Duration.days(7), // Reduced retention for development
         preferredWindow: "03:00-04:00",
       },
       preferredMaintenanceWindow: "sun:04:00-sun:05:00",
       cloudwatchLogsExports: ["postgresql"],
       storageEncrypted: true,
       storageEncryptionKey: this.databaseKmsKey,
-      monitoringInterval: cdk.Duration.seconds(60),
+      monitoringInterval: Duration.seconds(60),
       monitoringRole: new iam.Role(this, "DatabaseMonitoringRole", {
         assumedBy: new iam.ServicePrincipal("monitoring.rds.amazonaws.com"),
         managedPolicies: [
@@ -194,7 +207,7 @@ export class MihcStack extends cdk.Stack {
         ],
       }),
       deletionProtection: false, // Allow deletion in development
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // Allow destruction in development
+      removalPolicy: RemovalPolicy.DESTROY, // Allow destruction in development
       defaultDatabaseName: "medical_records",
       parameterGroup: new rds.ParameterGroup(this, "DatabaseParameterGroup", {
         engine: rds.DatabaseClusterEngine.auroraPostgres({
@@ -247,7 +260,7 @@ export class MihcStack extends cdk.Stack {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, // Lambda needs internet for AWS services
       },
       securityGroups: [this.lambdaSecurityGroup],
-      timeout: cdk.Duration.minutes(5),
+      timeout: Duration.minutes(5),
       memorySize: 512,
       description: "Lambda function for diabetes database operations (development)",
     });
@@ -265,7 +278,7 @@ export class MihcStack extends cdk.Stack {
         ],
         resources: [
           this.auroraCluster.secret!.secretArn,
-          `arn:aws:secretsmanager:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:secret:rds-db-credentials/*`
+          `arn:aws:secretsmanager:${Stack.of(this).region}:${Stack.of(this).account}:secret:rds-db-credentials/*`
         ]
       })
     );
@@ -294,76 +307,182 @@ export class MihcStack extends cdk.Stack {
       authType: lambda.FunctionUrlAuthType.NONE, // No auth required - DEVELOPMENT ONLY
     });
 
-    // Export the function URL for use in other stacks (e.g., CloudFront integration)
+    // Store the database Lambda URL for use by other stacks
     this.databaseLambdaUrl = functionUrl.url;
 
-    new cdk.CfnOutput(this, "RawBucketName", {
+    // Create boto3 Lambda layer
+    const boto3Layer = new lambda.LayerVersion(this, "Boto3Layer", {
+      code: lambda.Code.fromAsset("../lambda/lambda_layer/boto3_layer"),
+      compatibleRuntimes: [lambda.Runtime.PYTHON_3_11],
+      description: "Boto3 library for Lambda functions",
+    });
+
+    // Create BDA Data Extraction Lambda function
+    this.bdaDataExtractionLambda = new lambda.Function(this, "BdaDataExtractionLambda", {
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: "index.lambda_handler",
+      code: lambda.Code.fromAsset("../lambda/bda-data-extraction"),
+      layers: [boto3Layer],
+      environment: {
+        RAW_BUCKET: this.rawBucket.bucketName,
+        PROCESSED_BUCKET: this.processedBucket.bucketName,
+        DB_HOST: this.auroraCluster.clusterEndpoint.hostname,
+        DB_PORT: this.auroraCluster.clusterEndpoint.port.toString(),
+        DB_NAME: "medical_records",
+        DB_SECRET_ARN: this.auroraCluster.secret!.secretArn,
+        DB_CLUSTER_ARN: this.auroraCluster.clusterArn,
+      },
+      vpc: this.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      securityGroups: [this.lambdaSecurityGroup],
+      timeout: Duration.minutes(15), // Longer timeout for data extraction
+      memorySize: 1024, // More memory for data processing
+      description: "Lambda function for BDA data extraction and processing",
+    });
+
+    // Grant BDA Lambda permissions to S3 buckets
+    this.rawBucket.grantReadWrite(this.bdaDataExtractionLambda);
+    this.processedBucket.grantReadWrite(this.bdaDataExtractionLambda);
+
+    // Grant BDA Lambda permission to read database secrets
+    this.auroraCluster.secret!.grantRead(this.bdaDataExtractionLambda);
+
+    // Grant BDA Lambda permission to use KMS key for decryption
+    this.databaseKmsKey.grantDecrypt(this.bdaDataExtractionLambda);
+
+    // Grant BDA Lambda permission to use RDS Data API
+    this.bdaDataExtractionLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          "rds-data:ExecuteStatement",
+          "rds-data:BatchExecuteStatement",
+          "rds-data:BeginTransaction",
+          "rds-data:CommitTransaction",
+          "rds-data:RollbackTransaction"
+        ],
+        resources: [this.auroraCluster.clusterArn]
+      })
+    );
+
+    // Add explicit Secrets Manager permissions for BDA Lambda
+    this.bdaDataExtractionLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ],
+        resources: [
+          this.auroraCluster.secret!.secretArn,
+          `arn:aws:secretsmanager:${Stack.of(this).region}:${Stack.of(this).account}:secret:rds-db-credentials/*`
+        ]
+      })
+    );
+
+    // Grant BDA Lambda permission to use Bedrock Data Automation
+    this.bdaDataExtractionLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          "bedrock:ListBlueprints",
+          "bedrock:GetBlueprint",
+          "bedrock:CreateBlueprint",
+          "bedrock:UpdateBlueprint",
+          "bedrock:DeleteBlueprint",
+          "bedrock:InvokeDataAutomationAsync",
+          "bedrock:GetDataAutomationStatus",
+          "bedrock:CreateDataAutomationProject",
+          "bedrock:GetDataAutomationProject",
+          "bedrock:ListDataAutomationProjects",
+          "bedrock:UpdateDataAutomationProject",
+          "bedrock:DeleteDataAutomationProject",
+          "bedrock:InvokeModel",
+          "bedrock:GetDataAutomationProfile"
+        ],
+        resources: ["*"]
+      })
+    );
+
+    new CfnOutput(this, "RawBucketName", {
       value: this.rawBucket.bucketName,
     });
-    new cdk.CfnOutput(this, "ProcessedBucketName", {
+    new CfnOutput(this, "ProcessedBucketName", {
       value: this.processedBucket.bucketName,
     });
-    new cdk.CfnOutput(this, "curatedBucketName", {
+    new CfnOutput(this, "curatedBucketName", {
       value: this.curatedBucket.bucketName,
     });
-    new cdk.CfnOutput(this, "archiveBucket", {
+    new CfnOutput(this, "archiveBucket", {
       value: this.archiveBucket.bucketName,
     });
-    new cdk.CfnOutput(this, "scriptBucketName", {
+    new CfnOutput(this, "scriptBucketName", {
       value: this.scriptBucket.bucketName,
     });
 
     // Medical database outputs
-    new cdk.CfnOutput(this, "MedicalDatabaseEndpoint", {
+    new CfnOutput(this, "MedicalDatabaseEndpoint", {
       value: this.auroraCluster.clusterEndpoint.hostname,
       description: "Medical database cluster endpoint (development)",
     });
-    new cdk.CfnOutput(this, "DatabaseClusterArn", {
+    new CfnOutput(this, "DatabaseClusterArn", {
       value: this.auroraCluster.clusterArn,
       description: "Aurora PostgreSQL cluster ARN for RDS Data API",
     });
-    new cdk.CfnOutput(this, "MedicalDatabaseSecretArn", {
+    new CfnOutput(this, "MedicalDatabaseSecretArn", {
       value: this.auroraCluster.secret!.secretArn,
       description: "ARN of the encrypted medical database credentials",
     });
-    new cdk.CfnOutput(this, "DatabaseSecretArn", {
+    new CfnOutput(this, "DatabaseSecretArn", {
       value: this.auroraCluster.secret!.secretArn,
       description: "Database credentials secret ARN (alias for migration scripts)",
     });
     
-    new cdk.CfnOutput(this, "MedicalDatabaseSecretName", {
+    new CfnOutput(this, "MedicalDatabaseSecretName", {
       value: this.auroraCluster.secret!.secretName,
       description: "Name of the encrypted medical database credentials",
     });
-    new cdk.CfnOutput(this, "DatabaseKmsKeyId", {
+    new CfnOutput(this, "DatabaseKmsKeyId", {
       value: this.databaseKmsKey.keyId,
       description: "KMS key ID for database encryption",
     });
-    new cdk.CfnOutput(this, "DatabaseKmsKeyArn", {
+    new CfnOutput(this, "DatabaseKmsKeyArn", {
       value: this.databaseKmsKey.keyArn,
       description: "KMS key ARN for database encryption",
     });
-    new cdk.CfnOutput(this, "VpcId", {
+    new CfnOutput(this, "VpcId", {
       value: this.vpc.vpcId,
       description: "VPC ID for the medical database cluster",
     });
-    new cdk.CfnOutput(this, "DatabaseSecurityGroupId", {
+    new CfnOutput(this, "DatabaseSecurityGroupId", {
       value: this.databaseSecurityGroup.securityGroupId,
       description: "Security group ID for database access control",
     });
 
     // Lambda function outputs
-    new cdk.CfnOutput(this, "DatabaseLambdaFunctionName", {
+    new CfnOutput(this, "DatabaseLambdaFunctionName", {
       value: this.databaseLambda.functionName,
       description: "Name of the database Lambda function",
     });
-    new cdk.CfnOutput(this, "DatabaseLambdaFunctionArn", {
+    new CfnOutput(this, "DatabaseLambdaFunctionArn", {
       value: this.databaseLambda.functionArn,
       description: "ARN of the database Lambda function",
     });
-    new cdk.CfnOutput(this, "DatabaseLambdaFunctionUrl", {
+    new CfnOutput(this, "DatabaseLambdaFunctionUrl", {
       value: functionUrl.url,
       description: "HTTP endpoint URL for the database Lambda function",
+    });
+
+    // BDA Data Extraction Lambda outputs
+    new CfnOutput(this, "BdaDataExtractionLambdaName", {
+      value: this.bdaDataExtractionLambda.functionName,
+      description: "Name of the BDA data extraction Lambda function",
+    });
+    new CfnOutput(this, "BdaDataExtractionLambdaArn", {
+      value: this.bdaDataExtractionLambda.functionArn,
+      description: "ARN of the BDA data extraction Lambda function",
     });
   }
 }
